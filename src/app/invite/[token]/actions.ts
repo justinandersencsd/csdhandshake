@@ -23,7 +23,6 @@ export async function acceptInvitation(formData: FormData) {
 
   const admin = createAdminClient();
 
-  // Look up invitation
   const { data: invitation, error: invitationError } = await admin
     .from("invitations")
     .select("*")
@@ -42,7 +41,6 @@ export async function acceptInvitation(formData: FormData) {
     redirect(`/invite/${token}?error=${encodeURIComponent("This invitation has expired")}`);
   }
 
-  // Create auth user
   const { data: authUser, error: authError } = await admin.auth.admin.createUser({
     email: invitation.email,
     password,
@@ -56,7 +54,6 @@ export async function acceptInvitation(formData: FormData) {
     );
   }
 
-  // Create users row (bypasses RLS because we're using admin client)
   const { error: userInsertError } = await admin.from("users").insert({
     id: authUser.user.id,
     email: invitation.email,
@@ -68,14 +65,30 @@ export async function acceptInvitation(formData: FormData) {
   });
 
   if (userInsertError) {
-    // Roll back the auth user creation
     await admin.auth.admin.deleteUser(authUser.user.id);
     redirect(
       `/invite/${token}?error=${encodeURIComponent("Failed to set up profile: " + userInsertError.message)}`
     );
   }
 
-  // Mark invitation accepted
+  // If this invitation was scoped to a project, add them as a member
+  if (invitation.project_id) {
+    await admin.from("project_members").insert({
+      project_id: invitation.project_id,
+      user_id: authUser.user.id,
+      project_role: "member",
+      added_by: invitation.invited_by,
+    });
+
+    await admin.from("audit_events").insert({
+      user_id: invitation.invited_by,
+      event_type: "project.member_added",
+      target_type: "project",
+      target_id: invitation.project_id,
+      metadata: { added_user: authUser.user.id, via: "invitation_accept" },
+    });
+  }
+
   await admin
     .from("invitations")
     .update({
@@ -84,7 +97,6 @@ export async function acceptInvitation(formData: FormData) {
     })
     .eq("id", invitation.id);
 
-  // Audit event
   await admin.from("audit_events").insert({
     user_id: authUser.user.id,
     event_type: "user.accepted_invitation",
@@ -93,7 +105,6 @@ export async function acceptInvitation(formData: FormData) {
     metadata: { email: invitation.email, role: invitation.role },
   });
 
-  // Sign the new user in (using regular server client so cookies get set)
   const supabase = await createClient();
   const { error: signInError } = await supabase.auth.signInWithPassword({
     email: invitation.email,
@@ -101,16 +112,15 @@ export async function acceptInvitation(formData: FormData) {
   });
 
   if (signInError) {
-    // Account was created successfully, just couldn't auto-sign them in.
-    // Send to login with a helpful message.
     redirect(`/login?error=${encodeURIComponent("Account created. Please sign in.")}`);
   }
 
-  // Redirect based on role
   if (invitation.role === "partner") {
     redirect("/onboarding/coc");
   } else if (invitation.role === "student") {
     redirect("/onboarding/aup");
+  } else if (invitation.project_id) {
+    redirect(`/projects/${invitation.project_id}`);
   } else {
     redirect("/");
   }
