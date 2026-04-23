@@ -5,10 +5,10 @@ import {
   updateProject,
   archiveProject,
   unarchiveProject,
-  addMember,
   removeMember,
 } from "./actions";
 import { RoleBadge } from "@/components/role-badge";
+import { AddMemberForm } from "@/components/add-member-form";
 
 export default async function ProjectSettingsPage({
   params,
@@ -185,67 +185,7 @@ export default async function ProjectSettingsPage({
             })}
           </ul>
 
-          {!archived && (
-            <form action={addMember} className="space-y-3 border-t border-brand-border pt-4">
-              <h3 className="text-sm font-medium text-navy">Add a member</h3>
-              <p className="text-xs text-neutral-dark">
-                If they already have an account, they&apos;re added directly. If not, we&apos;ll
-                send them an invitation email.
-              </p>
-
-              <input type="hidden" name="project_id" value={project.id} />
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-navy">Email</label>
-                  <input
-                    name="email"
-                    type="email"
-                    required
-                    className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-navy">Full name</label>
-                  <input
-                    name="full_name"
-                    type="text"
-                    required
-                    className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-navy">Role</label>
-                  <select
-                    name="role"
-                    required
-                    className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
-                  >
-                    <option value="student">Student</option>
-                    <option value="partner">Partner</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-navy">
-                    Organization (partners)
-                  </label>
-                  <input
-                    name="organization"
-                    type="text"
-                    placeholder="Optional"
-                    className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="rounded-md bg-navy text-surface px-4 py-1.5 text-sm font-medium hover:bg-navy-soft transition"
-              >
-                Add member
-              </button>
-            </form>
-          )}
+          {!archived && <AddMemberForm projectId={project.id} />}
         </section>
 
         {/* DANGER ZONE */}

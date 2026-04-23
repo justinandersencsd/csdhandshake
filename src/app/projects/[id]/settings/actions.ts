@@ -133,7 +133,117 @@ export async function unarchiveProject(formData: FormData) {
   redirect(`/projects/${id}/settings?success=Project+unarchived`);
 }
 
-export async function addMember(formData: FormData) {
+// Lookup what we know about this email for this project.
+// Returns a state string so the client can decide what UI to show next.
+export type LookupResult =
+  | { state: "existing_member"; fullName: string }
+  | {
+      state: "existing_can_add";
+      userId: string;
+      fullName: string;
+      role: string;
+      organization: string | null;
+    }
+  | { state: "previously_removed"; userId: string; fullName: string; role: string }
+  | { state: "new" };
+
+export async function lookupMemberEmail(
+  projectId: string,
+  rawEmail: string
+): Promise<LookupResult> {
+  const email = rawEmail.trim().toLowerCase();
+  if (!email) return { state: "new" };
+
+  await requireOwnerOrAdmin(projectId);
+
+  const admin = createAdminClient();
+
+  const { data: existingUser } = await admin
+    .from("users")
+    .select("id, full_name, role, organization")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (!existingUser) {
+    return { state: "new" };
+  }
+
+  const { data: membership } = await admin
+    .from("project_members")
+    .select("project_id, left_at")
+    .eq("project_id", projectId)
+    .eq("user_id", existingUser.id)
+    .maybeSingle();
+
+  if (membership && !membership.left_at) {
+    return { state: "existing_member", fullName: existingUser.full_name };
+  }
+
+  if (membership && membership.left_at) {
+    return {
+      state: "previously_removed",
+      userId: existingUser.id,
+      fullName: existingUser.full_name,
+      role: existingUser.role,
+    };
+  }
+
+  return {
+    state: "existing_can_add",
+    userId: existingUser.id,
+    fullName: existingUser.full_name,
+    role: existingUser.role,
+    organization: existingUser.organization,
+  };
+}
+
+// Add (or re-add) an existing user to the project.
+export async function addExistingMember(formData: FormData) {
+  const project_id = formData.get("project_id") as string;
+  const user_id = formData.get("user_id") as string;
+
+  if (!project_id || !user_id) {
+    redirect(`/projects/${project_id}/settings?error=Missing+data`);
+  }
+
+  const { user } = await requireOwnerOrAdmin(project_id);
+
+  const admin = createAdminClient();
+
+  // Upsert: insert a new row or reset left_at if a row exists
+  const { error } = await admin
+    .from("project_members")
+    .upsert(
+      {
+        project_id,
+        user_id,
+        project_role: "member",
+        added_by: user.id,
+        added_at: new Date().toISOString(),
+        left_at: null,
+      },
+      { onConflict: "project_id,user_id" }
+    );
+
+  if (error) {
+    redirect(
+      `/projects/${project_id}/settings?error=${encodeURIComponent("Failed to add: " + error.message)}`
+    );
+  }
+
+  await admin.from("audit_events").insert({
+    user_id: user.id,
+    event_type: "project.member_added",
+    target_type: "project",
+    target_id: project_id,
+    metadata: { added_user: user_id },
+  });
+
+  redirect(`/projects/${project_id}/settings?success=Member+added`);
+}
+
+// Invite a brand-new user to the project (creates invitation + sends email).
+export async function inviteNewMember(formData: FormData) {
   const project_id = formData.get("project_id") as string;
   const email = (formData.get("email") as string)?.trim().toLowerCase();
   const full_name = (formData.get("full_name") as string)?.trim();
@@ -146,60 +256,9 @@ export async function addMember(formData: FormData) {
 
   const { user, profile, project } = await requireOwnerOrAdmin(project_id);
 
-  const admin = createAdminClient();
-
-  // Does a user with this email already exist?
-  const { data: existingUser } = await admin
-    .from("users")
-    .select("id, role")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (existingUser) {
-    // Are they already a member?
-    const { data: existingMember } = await admin
-      .from("project_members")
-      .select("project_id")
-      .eq("project_id", project_id)
-      .eq("user_id", existingUser.id)
-      .is("left_at", null)
-      .maybeSingle();
-
-    if (existingMember) {
-      redirect(
-        `/projects/${project_id}/settings?error=${encodeURIComponent(email + " is already a member")}`
-      );
-    }
-
-    const { error } = await admin.from("project_members").insert({
-      project_id,
-      user_id: existingUser.id,
-      project_role: "member",
-      added_by: user.id,
-    });
-
-    if (error) {
-      redirect(
-        `/projects/${project_id}/settings?error=${encodeURIComponent("Failed to add: " + error.message)}`
-      );
-    }
-
-    await admin.from("audit_events").insert({
-      user_id: user.id,
-      event_type: "project.member_added",
-      target_type: "project",
-      target_id: project_id,
-      metadata: { added_user: existingUser.id, email },
-    });
-
-    redirect(`/projects/${project_id}/settings?success=Added+${encodeURIComponent(email)}`);
-  }
-
-  // User doesn't exist — create invitation scoped to this project
   const token = crypto.randomBytes(32).toString("hex");
   const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Use regular client so RLS applies (invited_by = auth.uid())
   const supabase = await createClient();
   const { error: inviteError } = await supabase.from("invitations").insert({
     email,
@@ -219,7 +278,7 @@ export async function addMember(formData: FormData) {
     );
   }
 
-  // Get the school name and project name for the email
+  const admin = createAdminClient();
   const { data: school } = await admin
     .from("schools")
     .select("name")
@@ -267,7 +326,6 @@ export async function removeMember(formData: FormData) {
 
   const admin = createAdminClient();
 
-  // Soft-remove by setting left_at
   const { error } = await admin
     .from("project_members")
     .update({ left_at: new Date().toISOString() })
