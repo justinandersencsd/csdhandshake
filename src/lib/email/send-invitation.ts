@@ -1,7 +1,5 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 type InvitationEmailProps = {
   to: string;
   inviteeName: string;
@@ -21,6 +19,7 @@ export async function sendInvitationEmail({
   token,
   role,
 }: InvitationEmailProps) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
   const appUrl = process.env.APP_URL ?? "http://localhost:3000";
   const supportEmail = process.env.RESEND_FROM_EMAIL ?? "support@canyonsdistrict.org";
   const link = `${appUrl}/invite/${token}`;
