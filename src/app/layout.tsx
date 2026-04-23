@@ -1,9 +1,21 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  weight: "400",
+  style: ["normal", "italic"],
+  subsets: ["latin"],
+  variable: "--font-serif",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "CSD Handshake",
@@ -16,7 +28,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn("h-full", "antialiased", inter.variable)} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={cn(
+        "h-full",
+        "antialiased",
+        inter.variable,
+        instrumentSerif.variable
+      )}
+      suppressHydrationWarning
+    >
       <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>
         {children}
       </body>
