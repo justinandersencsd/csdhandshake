@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { MessageComposer } from "@/components/message-composer";
 import { MessageItem } from "@/components/message-item";
+import { MarkAsReadOnMount } from "@/components/mark-as-read";
 import { initials, relativeTime } from "@/lib/format";
 
 const ROLE_COLORS: Record<string, string> = {
@@ -63,7 +64,6 @@ export default async function ProjectPage({
     .order("created_at", { ascending: true });
 
   const pendingCount = (messages ?? []).filter((m) => m.pending_review).length;
-  const owner = members?.find((m) => m.user_id === project.created_by);
 
   return (
     <main className="min-h-screen bg-[#F2F5FA] text-foreground">
@@ -73,14 +73,13 @@ export default async function ProjectPage({
         canCreateProject={isTeacher || isAdmin}
       />
 
+      <MarkAsReadOnMount projectId={id} />
+
       <div className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-[1fr_260px]">
         <div className="min-w-0 space-y-6">
           <div className="flex items-baseline justify-between gap-4 flex-wrap">
             <div className="space-y-1">
-              <Link
-                href="/"
-                className="text-xs text-neutral-dark hover:text-navy"
-              >
+              <Link href="/" className="text-xs text-neutral-dark hover:text-navy">
                 ← All projects
               </Link>
               <h1 className="font-serif text-3xl text-navy leading-tight">
@@ -121,16 +120,12 @@ export default async function ProjectPage({
             )}
           </div>
 
-          {project.status === "active" && (
-            <MessageComposer projectId={id} />
-          )}
+          {project.status === "active" && <MessageComposer projectId={id} />}
         </div>
 
         <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
           <div className="space-y-2">
-            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">
-              About
-            </div>
+            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">About</div>
             {project.description ? (
               <p className="text-sm text-navy-soft">{project.description}</p>
             ) : (
@@ -147,9 +142,7 @@ export default async function ProjectPage({
 
           {project.partner_organization && (
             <div className="rounded-lg bg-warning/8 border border-warning/20 px-4 py-3 space-y-1">
-              <div className="text-[11px] uppercase tracking-wider text-neutral-dark">
-                Partner
-              </div>
+              <div className="text-[11px] uppercase tracking-wider text-neutral-dark">Partner</div>
               <div className="font-serif text-base text-navy italic">
                 {project.partner_organization}
               </div>
@@ -166,10 +159,7 @@ export default async function ProjectPage({
                 const u = m.user as any;
                 const isOwner = m.user_id === project.created_by;
                 return (
-                  <li
-                    key={m.user_id}
-                    className="flex items-start gap-2 text-xs"
-                  >
+                  <li key={m.user_id} className="flex items-start gap-2 text-xs">
                     <div className="h-7 w-7 flex-shrink-0 rounded-full bg-navy text-white flex items-center justify-center text-[10px] font-medium">
                       {initials(u?.full_name ?? "")}
                     </div>
@@ -183,9 +173,7 @@ export default async function ProjectPage({
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`text-[9px] uppercase tracking-wider px-1 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}
-                        >
+                        <span className={`text-[9px] uppercase tracking-wider px-1 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}>
                           {u?.role?.replace("_", " ")}
                         </span>
                         {u?.organization && (

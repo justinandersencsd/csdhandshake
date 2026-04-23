@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkMessage, flagLabel, type FilterResult } from "@/lib/content-filter";
 import { sendFlagAlert } from "@/lib/email/send-flag-alert";
+import { sendNewMessageEmail } from "@/lib/email/send-new-message";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
@@ -43,21 +44,14 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
   if (!project) return { error: "Project not found." };
   if (project.status !== "active") return { error: "This project is archived." };
 
-  // URL + email allowlists from env
   const urlAllowlist = (process.env.URL_ALLOWLIST ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .split(",").map((s) => s.trim()).filter(Boolean);
   const emailAllowlist = (process.env.EMAIL_ALLOWLIST ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .split(",").map((s) => s.trim()).filter(Boolean);
 
-  // Content filter
   const check: FilterResult = checkMessage(body, { urlAllowlist, emailAllowlist });
 
   if (!check.ok && check.hardBlock) {
-    // Log flag, possibly alert admins
     const admin = createAdminClient();
     await admin.from("content_flags").insert({
       project_id,
@@ -79,10 +73,7 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
       },
     });
 
-    // Check repeated blocks in last 24h
-    const twentyFourHoursAgo = new Date(
-      Date.now() - 24 * 60 * 60 * 1000
-    ).toISOString();
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { count } = await admin
       .from("content_flags")
       .select("id", { count: "exact", head: true })
@@ -127,22 +118,17 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
     };
   }
 
-  // Quiet hours (partners only)
   if (profile.role === "partner" && project.quiet_hours_enabled) {
     const { data: school } = await supabase
-      .from("schools")
-      .select("timezone")
-      .eq("id", project.school_id)
-      .maybeSingle();
+      .from("schools").select("timezone").eq("id", project.school_id).maybeSingle();
     const tz = school?.timezone ?? "America/Denver";
     if (isInQuietHours(tz, project.quiet_hours_start, project.quiet_hours_end)) {
       return {
-        error: `Messages to students are paused right now (${project.quiet_hours_start?.slice(0, 5) ?? ""}–${project.quiet_hours_end?.slice(0, 5) ?? ""}). Please try again later.`,
+        error: `Messages to students are paused right now (${project.quiet_hours_start?.slice(0,5) ?? ""}–${project.quiet_hours_end?.slice(0,5) ?? ""}). Please try again later.`,
       };
     }
   }
 
-  // Rate limit (partners only)
   if (profile.role === "partner" && project.rate_limit_enabled) {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const { count: recentCount } = await supabase
@@ -160,12 +146,11 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
     }
   }
 
-  // First-message review (partners only)
   let pendingReview = false;
   if (profile.role === "partner" && project.first_message_review_enabled) {
     const { data: membership } = await supabase
       .from("project_members")
-      .select("first_message_reviewed, first_message_reviewed_count")
+      .select("first_message_reviewed")
       .eq("project_id", project_id)
       .eq("user_id", user.id)
       .maybeSingle();
@@ -174,7 +159,6 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
     }
   }
 
-  // Insert message
   const { data: inserted, error: insertError } = await supabase
     .from("messages")
     .insert({
@@ -187,11 +171,8 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
     .select("id")
     .single();
 
-  if (insertError) {
-    return { error: "Failed to send: " + insertError.message };
-  }
+  if (insertError) return { error: "Failed to send: " + insertError.message };
 
-  // If soft warn & sent, also record the flag (non-blocking, pending review)
   if (check.softWarn && confirmed) {
     const admin = createAdminClient();
     await admin.from("content_flags").insert({
@@ -212,7 +193,6 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
     });
   }
 
-  // Audit: sent
   {
     const admin = createAdminClient();
     await admin.from("audit_events").insert({
@@ -222,6 +202,22 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
       target_id: inserted.id,
       metadata: { project_id, pending_review: pendingReview },
     });
+  }
+
+  // Send immediate email notifications (rate-limited per recipient per 5 min)
+  if (!pendingReview) {
+    try {
+      await notifyMembers({
+        projectId: project_id,
+        projectName: project.name,
+        senderId: user.id,
+        senderName: profile.full_name,
+        senderRole: profile.role,
+        body,
+      });
+    } catch (e) {
+      console.error("Notification failed", e);
+    }
   }
 
   revalidatePath(`/projects/${project_id}`);
@@ -236,32 +232,22 @@ export async function editMessage(formData: FormData) {
   if (!id || !body) return;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Re-check content filter on edit
   const urlAllowlist = (process.env.URL_ALLOWLIST ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .split(",").map((s) => s.trim()).filter(Boolean);
   const emailAllowlist = (process.env.EMAIL_ALLOWLIST ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .split(",").map((s) => s.trim()).filter(Boolean);
   const check = checkMessage(body, { urlAllowlist, emailAllowlist });
   if (!check.ok && check.hardBlock) {
-    return {
-      error: `Edit blocked (${flagLabel(check.hardBlock.type)}).`,
-    };
+    return { error: `Edit blocked (${flagLabel(check.hardBlock.type)}).` };
   }
 
   const { error } = await supabase
     .from("messages")
     .update({ body, edited_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("sender_id", user.id);
+    .eq("id", id).eq("sender_id", user.id);
   if (error) return { error: error.message };
 
   revalidatePath(`/projects/${project_id}`);
@@ -274,9 +260,7 @@ export async function deleteMessage(formData: FormData) {
   if (!id) return;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
   await supabase
@@ -295,18 +279,12 @@ export async function reportMessage(formData: FormData) {
   if (!project_id || !message_id) return { error: "Missing data." };
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not signed in." };
 
   const admin = createAdminClient();
   const { error } = await admin.from("message_reports").insert({
-    message_id,
-    project_id,
-    reporter_id: user.id,
-    reason,
-    status: "pending",
+    message_id, project_id, reporter_id: user.id, reason, status: "pending",
   });
   if (error) return { error: error.message };
 
@@ -318,20 +296,13 @@ export async function reportMessage(formData: FormData) {
     metadata: { project_id, reason },
   });
 
-  // Email project teachers + admins
   try {
     const { data: project } = await admin
-      .from("projects")
-      .select("id, name, school_id")
-      .eq("id", project_id)
-      .maybeSingle();
-
+      .from("projects").select("id, name, school_id").eq("id", project_id).maybeSingle();
     const { data: message } = await admin
       .from("messages")
       .select("body, sender:users!sender_id(full_name, role)")
-      .eq("id", message_id)
-      .maybeSingle();
-
+      .eq("id", message_id).maybeSingle();
     if (project && message) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sender = message.sender as any;
@@ -360,17 +331,11 @@ export async function approveMessage(formData: FormData) {
   if (!id) return;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Get the message to know sender
   const { data: msg } = await supabase
-    .from("messages")
-    .select("sender_id, project_id")
-    .eq("id", id)
-    .maybeSingle();
+    .from("messages").select("sender_id, project_id, body").eq("id", id).maybeSingle();
   if (!msg) return;
 
   const admin = createAdminClient();
@@ -383,7 +348,6 @@ export async function approveMessage(formData: FormData) {
     })
     .eq("id", id);
 
-  // Increment the sender's first_message_reviewed_count
   const { data: member } = await admin
     .from("project_members")
     .select("first_message_reviewed_count")
@@ -392,10 +356,8 @@ export async function approveMessage(formData: FormData) {
     .maybeSingle();
 
   const { data: project } = await admin
-    .from("projects")
-    .select("first_message_review_count")
-    .eq("id", msg.project_id)
-    .maybeSingle();
+    .from("projects").select("first_message_review_count, name")
+    .eq("id", msg.project_id).maybeSingle();
 
   const newCount = (member?.first_message_reviewed_count ?? 0) + 1;
   const threshold = project?.first_message_review_count ?? 3;
@@ -418,8 +380,45 @@ export async function approveMessage(formData: FormData) {
     metadata: { project_id },
   });
 
+  // Now that message is approved, send out notifications
+  try {
+    const { data: sender } = await admin
+      .from("users").select("full_name, role").eq("id", msg.sender_id).maybeSingle();
+    if (sender && project) {
+      await notifyMembers({
+        projectId: msg.project_id,
+        projectName: project.name,
+        senderId: msg.sender_id,
+        senderName: sender.full_name,
+        senderRole: sender.role,
+        body: msg.body,
+      });
+    }
+  } catch (e) {
+    console.error("Post-approve notify failed", e);
+  }
+
   revalidatePath(`/projects/${project_id}`);
   return { ok: true };
+}
+
+export async function markAsRead(projectId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const admin = createAdminClient();
+  await admin.from("message_reads").upsert(
+    {
+      user_id: user.id,
+      project_id: projectId,
+      last_read_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,project_id" }
+  );
+
+  revalidatePath("/");
+  revalidatePath(`/projects/${projectId}`);
 }
 
 // --- helpers ---
@@ -431,10 +430,7 @@ function isInQuietHours(
 ): boolean {
   if (!start || !end) return false;
   const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
+    timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit",
   });
   const parts = fmt.formatToParts(new Date());
   const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
@@ -445,12 +441,8 @@ function isInQuietHours(
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
   if (startMin === endMin) return false;
-  if (startMin < endMin) {
-    return nowMin >= startMin && nowMin < endMin;
-  } else {
-    // Overnight window (e.g., 20:00–08:00)
-    return nowMin >= startMin || nowMin < endMin;
-  }
+  if (startMin < endMin) return nowMin >= startMin && nowMin < endMin;
+  return nowMin >= startMin || nowMin < endMin;
 }
 
 async function alertAdmins(p: {
@@ -492,4 +484,69 @@ async function alertAdmins(p: {
     reviewUrl: `${appUrl}/projects/${p.projectId}`,
     repeatedBlocks: p.repeatedBlocks,
   });
+}
+
+async function notifyMembers(p: {
+  projectId: string;
+  projectName: string;
+  senderId: string;
+  senderName: string;
+  senderRole: string;
+  body: string;
+}) {
+  const admin = createAdminClient();
+
+  // Get active project members except sender
+  const { data: members } = await admin
+    .from("project_members")
+    .select("user_id, user:users!user_id(email, full_name, notification_prefs)")
+    .eq("project_id", p.projectId)
+    .is("left_at", null);
+
+  if (!members) return;
+
+  const appUrl = process.env.APP_URL || "http://localhost:3000";
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+  for (const m of members) {
+    if (m.user_id === p.senderId) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const u = m.user as any;
+    if (!u?.email) continue;
+
+    const prefs = u.notification_prefs ?? {};
+    const freq = prefs.email_frequency ?? "immediate"; // immediate | daily | never
+    if (freq !== "immediate") continue;
+
+    // Rate-limit: skip if we've already emailed this recipient for this project in last 5 min
+    const { data: recent } = await admin
+      .from("email_log")
+      .select("id")
+      .eq("recipient_id", m.user_id)
+      .eq("project_id", p.projectId)
+      .eq("kind", "new_message")
+      .gte("sent_at", fiveMinAgo)
+      .limit(1);
+    if (recent && recent.length > 0) continue;
+
+    try {
+      await sendNewMessageEmail({
+        to: u.email,
+        recipientName: u.full_name,
+        senderName: p.senderName,
+        senderRole: p.senderRole,
+        projectName: p.projectName,
+        messageBody: p.body,
+        projectUrl: `${appUrl}/projects/${p.projectId}`,
+      });
+
+      await admin.from("email_log").insert({
+        recipient_id: m.user_id,
+        project_id: p.projectId,
+        kind: "new_message",
+      });
+    } catch (e) {
+      console.error("Email to", u.email, "failed:", e);
+    }
+  }
 }

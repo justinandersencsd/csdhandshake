@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { ProjectCard } from "@/components/project-card";
 import { AppHeader } from "@/components/app-header";
+import { TabTitleBadge } from "@/components/tab-title-badge";
 
 export default async function Home() {
   const supabase = await createClient();
@@ -72,6 +73,38 @@ export default async function Home() {
     lastMessages.map((lm) => [lm.projectId, lm.message])
   );
 
+  // Unread counts per project
+  const { data: reads } = projectIds.length
+    ? await supabase
+        .from("message_reads")
+        .select("project_id, last_read_at")
+        .eq("user_id", user.id)
+        .in("project_id", projectIds)
+    : { data: [] };
+
+  const readMap = new Map(
+    (reads ?? []).map((r) => [r.project_id, r.last_read_at])
+  );
+
+  const unreadCounts = await Promise.all(
+    (projects ?? []).map(async (p) => {
+      const lastRead = readMap.get(p.id);
+      const query = supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", p.id)
+        .is("deleted_at", null)
+        .is("pending_review", false)
+        .neq("sender_id", user.id);
+      if (lastRead) query.gt("created_at", lastRead);
+      const { count } = await query;
+      return { projectId: p.id, count: count ?? 0 };
+    })
+  );
+
+  const unreadMap = new Map(unreadCounts.map((u) => [u.projectId, u.count]));
+  const totalUnread = unreadCounts.reduce((sum, u) => sum + u.count, 0);
+
   const activeProjects = (projects ?? []).filter((p) => p.status === "active");
   const archivedProjects = (projects ?? []).filter(
     (p) => p.status === "archived"
@@ -106,6 +139,7 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen bg-[#F2F5FA] text-foreground">
+      <TabTitleBadge count={totalUnread} />
       <AppHeader
         profile={profile}
         canInvite={canInvite}
@@ -113,7 +147,6 @@ export default async function Home() {
       />
 
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
-        {/* Greeting */}
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div className="space-y-1">
             <h1 className="font-serif text-3xl sm:text-4xl text-navy leading-none">
@@ -123,6 +156,14 @@ export default async function Home() {
               {totalActive === 0
                 ? "You haven't been added to any active projects yet."
                 : `${totalActive} active ${totalActive === 1 ? "project" : "projects"}`}
+              {totalUnread > 0 && (
+                <>
+                  <span className="mx-1">·</span>
+                  <span className="font-medium text-navy">
+                    {totalUnread} unread
+                  </span>
+                </>
+              )}
             </p>
           </div>
           {profile.organization && (
@@ -137,7 +178,6 @@ export default async function Home() {
           )}
         </div>
 
-        {/* Active projects */}
         <section className="space-y-3">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
@@ -161,13 +201,13 @@ export default async function Home() {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   members={membersFor(p.id) as any}
                   lastMessage={lastMessageFor(p.id)}
+                  unreadCount={unreadMap.get(p.id) ?? 0}
                 />
               ))}
             </div>
           )}
         </section>
 
-        {/* Archived — collapsed by default */}
         {archivedProjects.length > 0 && (
           <details className="group space-y-3 [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden">
             <summary className="cursor-pointer flex items-center justify-between py-2 text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark hover:text-navy transition">
@@ -176,9 +216,6 @@ export default async function Home() {
                   ›
                 </span>
                 Archived · {archivedProjects.length}
-              </span>
-              <span className="text-[11px] opacity-0 group-open:opacity-100 transition-opacity text-neutral-dark/70 normal-case tracking-normal">
-                click to collapse
               </span>
             </summary>
             <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 pt-1">
@@ -189,13 +226,13 @@ export default async function Home() {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   members={membersFor(p.id) as any}
                   lastMessage={lastMessageFor(p.id)}
+                  unreadCount={unreadMap.get(p.id) ?? 0}
                 />
               ))}
             </div>
           </details>
         )}
 
-        {/* Subtle footer mark */}
         <div className="pt-12 pb-2 text-center">
           <p className="text-[11px] text-neutral-dark/60 uppercase tracking-[0.2em]">
             Canyons School District · Handshake
