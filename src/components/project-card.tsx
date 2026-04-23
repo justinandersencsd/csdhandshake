@@ -46,7 +46,7 @@ export function ProjectCard({
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group relative block bg-surface rounded-xl border border-brand-border overflow-hidden hover:border-navy transition"
+      className="card-pressable group relative block bg-surface rounded-xl border border-brand-border overflow-hidden hover:border-navy hover:shadow-sm transition-all duration-150"
     >
       <div
         className={`absolute left-0 top-0 bottom-0 w-0.5 transition ${
@@ -87,7 +87,9 @@ export function ProjectCard({
         {lastMessage ? (
           <div className="space-y-1">
             <div className="text-xs text-neutral-dark">
-              <span className="font-medium text-navy">{lastMessage.sender_name}</span>
+              <span className="font-medium text-navy">
+                {lastMessage.sender_name}
+              </span>
               <span className="mx-1">·</span>
               <span>{relativeTime(lastMessage.created_at)}</span>
             </div>

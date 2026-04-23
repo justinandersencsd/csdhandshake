@@ -22,7 +22,7 @@ export function AdminNav({ active }: { active: string }) {
           <Link
             key={item.href}
             href={item.href}
-            className={`block px-3 py-1.5 rounded-md text-sm transition ${
+            className={`block px-3 py-1.5 rounded-md text-sm transition-all duration-100 active:scale-[0.98] ${
               isActive
                 ? "bg-navy text-white"
                 : "text-neutral-dark hover:bg-neutral-100 hover:text-navy"

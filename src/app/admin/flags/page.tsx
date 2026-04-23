@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { AdminNav } from "@/components/admin-nav";
+import { SubmitButton } from "@/components/button";
 import { relativeTime } from "@/lib/format";
 import { dismissFlag, acknowledgeFlag, resolveReport } from "../actions";
 
@@ -83,7 +84,9 @@ export default async function AdminFlagsPage({
 
         <div className="space-y-6 min-w-0">
           <div>
-            <h1 className="font-serif text-2xl sm:text-3xl text-navy">Flagged content</h1>
+            <h1 className="font-serif text-2xl sm:text-3xl text-navy">
+              Flagged content
+            </h1>
             <p className="text-sm text-neutral-dark mt-1">
               Messages flagged by the filter, plus user reports.
             </p>
@@ -94,7 +97,7 @@ export default async function AdminFlagsPage({
               <Link
                 key={f}
                 href={`/admin/flags?filter=${f}`}
-                className={`px-3 py-1.5 rounded-md transition ${
+                className={`px-3 py-1.5 rounded-md transition-colors duration-100 ${
                   filter === f
                     ? "bg-navy text-white"
                     : "text-neutral-dark hover:bg-neutral-100"
@@ -176,15 +179,23 @@ export default async function AdminFlagsPage({
                           <div className="flex gap-2 flex-shrink-0">
                             <form action={dismissFlag}>
                               <input type="hidden" name="id" value={f.id} />
-                              <button className="px-2.5 py-1 text-xs rounded border border-brand-border text-neutral-dark hover:bg-neutral-50">
+                              <SubmitButton
+                                size="sm"
+                                variant="secondary"
+                                loadingText="…"
+                              >
                                 Dismiss
-                              </button>
+                              </SubmitButton>
                             </form>
                             <form action={acknowledgeFlag}>
                               <input type="hidden" name="id" value={f.id} />
-                              <button className="px-2.5 py-1 text-xs rounded bg-success/15 text-success hover:bg-success/25">
+                              <SubmitButton
+                                size="sm"
+                                variant="success"
+                                loadingText="…"
+                              >
                                 Acknowledge
-                              </button>
+                              </SubmitButton>
                             </form>
                           </div>
                         )}
@@ -268,17 +279,33 @@ export default async function AdminFlagsPage({
                           <div className="flex gap-2 flex-shrink-0">
                             <form action={resolveReport}>
                               <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="action" value="dismiss" />
-                              <button className="px-2.5 py-1 text-xs rounded border border-brand-border text-neutral-dark hover:bg-neutral-50">
+                              <input
+                                type="hidden"
+                                name="action"
+                                value="dismiss"
+                              />
+                              <SubmitButton
+                                size="sm"
+                                variant="secondary"
+                                loadingText="…"
+                              >
                                 Dismiss
-                              </button>
+                              </SubmitButton>
                             </form>
                             <form action={resolveReport}>
                               <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="action" value="acknowledge" />
-                              <button className="px-2.5 py-1 text-xs rounded bg-success/15 text-success hover:bg-success/25">
+                              <input
+                                type="hidden"
+                                name="action"
+                                value="acknowledge"
+                              />
+                              <SubmitButton
+                                size="sm"
+                                variant="success"
+                                loadingText="…"
+                              >
                                 Acknowledge
-                              </button>
+                              </SubmitButton>
                             </form>
                           </div>
                         )}

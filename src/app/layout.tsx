@@ -1,44 +1,39 @@
 import type { Metadata } from "next";
-import { Inter, Instrument_Serif } from "next/font/google";
+import { Instrument_Serif, Inter } from "next/font/google";
+import { Suspense } from "react";
+import { RouteProgress } from "@/components/route-progress";
 import "./globals.css";
-import { cn } from "@/lib/utils";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap",
-});
 
 const instrumentSerif = Instrument_Serif({
   weight: "400",
-  style: ["normal", "italic"],
   subsets: ["latin"],
   variable: "--font-serif",
-  display: "swap",
+  style: ["normal", "italic"],
+});
+
+const inter = Inter({
+  weight: ["400", "500"],
+  subsets: ["latin"],
+  variable: "--font-sans",
 });
 
 export const metadata: Metadata = {
   title: "CSD Handshake",
-  description: "Canyons School District's student–partner communication platform.",
+  description:
+    "Canyons School District's student-partner communication platform.",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html
-      lang="en"
-      className={cn(
-        "h-full",
-        "antialiased",
-        inter.variable,
-        instrumentSerif.variable
-      )}
-      suppressHydrationWarning
-    >
-      <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>
+    <html lang="en" className={`${instrumentSerif.variable} ${inter.variable}`}>
+      <body className="font-sans antialiased">
+        <Suspense fallback={null}>
+          <RouteProgress />
+        </Suspense>
         {children}
       </body>
     </html>

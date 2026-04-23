@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { AdminNav } from "@/components/admin-nav";
+import { SubmitButton } from "@/components/button";
 import { relativeTime } from "@/lib/format";
 import { adminResendInvitation, adminCancelInvitation } from "./actions";
 
@@ -51,7 +52,6 @@ export default async function AdminPage({
 
   const admin = createAdminClient();
 
-  // Metric 1: active projects
   const projectsQuery = admin
     .from("projects")
     .select("id", { count: "exact", head: true })
@@ -59,7 +59,6 @@ export default async function AdminPage({
   if (!isDistrictAdmin) projectsQuery.eq("school_id", profile.school_id);
   const { count: activeProjects } = await projectsQuery;
 
-  // Metric 2: partners engaged (unique partner users in active projects)
   let partnersEngaged = 0;
   {
     const { data } = await admin
@@ -82,7 +81,6 @@ export default async function AdminPage({
     partnersEngaged = uniquePartners.size;
   }
 
-  // Metric 3: messages this week
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const messagesQuery = admin
     .from("messages")
@@ -95,7 +93,6 @@ export default async function AdminPage({
   if (!isDistrictAdmin) messagesQuery.eq("project.school_id", profile.school_id);
   const { count: messagesThisWeek } = await messagesQuery;
 
-  // Metric 4: flags pending review
   const flagsQuery = admin
     .from("content_flags")
     .select("id", { count: "exact", head: true })
@@ -110,7 +107,6 @@ export default async function AdminPage({
 
   const flagsForReview = (pendingFlagCount ?? 0) + (pendingReportCount ?? 0);
 
-  // Recent flags list (top 5)
   const { data: recentFlags } = await admin
     .from("content_flags")
     .select(
@@ -120,7 +116,6 @@ export default async function AdminPage({
     .order("created_at", { ascending: false })
     .limit(5);
 
-  // Pending invitations (scoped)
   const invitesQ = admin
     .from("invitations")
     .select(
@@ -253,9 +248,13 @@ export default async function AdminPage({
                             name="invitation_id"
                             value={inv.id}
                           />
-                          <button className="text-xs text-navy hover:underline">
+                          <SubmitButton
+                            size="sm"
+                            variant="secondary"
+                            loadingText="Sending…"
+                          >
                             Resend
-                          </button>
+                          </SubmitButton>
                         </form>
                         <form action={adminCancelInvitation}>
                           <input
@@ -263,9 +262,13 @@ export default async function AdminPage({
                             name="invitation_id"
                             value={inv.id}
                           />
-                          <button className="text-xs text-neutral-dark hover:text-danger">
+                          <SubmitButton
+                            size="sm"
+                            variant="ghost"
+                            loadingText="Cancelling…"
+                          >
                             Cancel
-                          </button>
+                          </SubmitButton>
                         </form>
                       </div>
                     </li>
@@ -359,11 +362,9 @@ function MetricCard({
 }) {
   const content = (
     <div
-      className={`rounded-xl border p-5 bg-surface transition ${
-        emphasize
-          ? "border-warning/40 bg-warning/5"
-          : "border-brand-border"
-      } ${href ? "hover:border-navy cursor-pointer" : ""}`}
+      className={`rounded-xl border p-5 bg-surface transition-all duration-150 ${
+        emphasize ? "border-warning/40 bg-warning/5" : "border-brand-border"
+      } ${href ? "hover:border-navy hover:shadow-sm cursor-pointer card-pressable" : ""}`}
     >
       <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">
         {label}

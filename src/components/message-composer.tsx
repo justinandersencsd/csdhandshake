@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { sendMessage } from "@/app/projects/[id]/actions";
 import { UploadButton, type UploadedAttachment } from "./upload-button";
+import { Button } from "./button";
 
 export function MessageComposer({ projectId }: { projectId: string }) {
   const [body, setBody] = useState("");
@@ -64,7 +65,7 @@ export function MessageComposer({ projectId }: { projectId: string }) {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           placeholder="Write a message…"
-          className="w-full min-h-[88px] rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-navy resize-y"
+          className="w-full min-h-[88px] rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-0 resize-y"
           disabled={isPending}
         />
         {showLink && (
@@ -73,7 +74,7 @@ export function MessageComposer({ projectId }: { projectId: string }) {
             value={link}
             onChange={(e) => setLink(e.target.value)}
             placeholder="https://…"
-            className="w-full rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-navy"
+            className="w-full rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy"
           />
         )}
         {attachment && (
@@ -88,7 +89,7 @@ export function MessageComposer({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() => setAttachment(null)}
-              className="text-neutral-dark hover:text-danger flex-shrink-0"
+              className="text-neutral-dark hover:text-danger flex-shrink-0 px-1 rounded"
             >
               Remove
             </button>
@@ -104,7 +105,7 @@ export function MessageComposer({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() => setShowLink((v) => !v)}
-              className="text-xs text-neutral-dark hover:text-navy"
+              className="text-xs text-neutral-dark hover:text-navy px-2 py-1 rounded hover:bg-neutral-100 transition"
             >
               {showLink ? "Remove link" : "+ Add link"}
             </button>
@@ -116,13 +117,14 @@ export function MessageComposer({ projectId }: { projectId: string }) {
               />
             )}
           </div>
-          <button
+          <Button
             onClick={() => submit(false)}
             disabled={!canSend}
-            className="px-4 py-2 rounded-md bg-navy text-white text-sm disabled:opacity-50"
+            loading={isPending}
+            loadingText="Sending…"
           >
-            {isPending ? "Sending…" : "Send"}
-          </button>
+            Send
+          </Button>
         </div>
       </div>
 
@@ -192,12 +194,7 @@ function BlockDialog({
           </div>
         </div>
         <div className="flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-md bg-navy text-white text-sm"
-          >
-            OK, I&apos;ll edit
-          </button>
+          <Button onClick={onClose}>OK, I&apos;ll edit</Button>
         </div>
       </div>
     </div>
@@ -244,20 +241,20 @@ function SoftWarnDialog({
           </div>
         </div>
         <div className="flex justify-end gap-2">
-          <button
+          <Button
+            variant="secondary"
             onClick={onCancel}
             disabled={isPending}
-            className="px-4 py-2 rounded-md border border-brand-border text-sm text-neutral-dark hover:bg-neutral-50"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={onConfirm}
-            disabled={isPending}
-            className="px-4 py-2 rounded-md bg-navy text-white text-sm disabled:opacity-50"
+            loading={isPending}
+            loadingText="Sending…"
           >
-            {isPending ? "Sending…" : "Send anyway"}
-          </button>
+            Send anyway
+          </Button>
         </div>
       </div>
     </div>
