@@ -3,6 +3,7 @@
 import { useState, useTransition, useEffect } from "react";
 import { editMessage, deleteMessage, approveMessage, getAttachmentUrl } from "@/app/projects/[id]/actions";
 import { ReportDialog } from "./report-dialog";
+import { ReadWatermark, type Reader } from "./read-watermark";
 import { relativeTime, initials, isWithin5Min } from "@/lib/format";
 
 type Message = {
@@ -34,13 +35,6 @@ const ROLE_COLORS: Record<string, string> = {
   district_admin: "bg-role-admin/15 text-role-admin",
 };
 
-/**
- * groupPosition:
- *   'solo' — standalone message (show avatar + header + bubble)
- *   'first' — first in a group (show avatar + header + bubble)
- *   'middle' — middle of group (bubble only, tight spacing)
- *   'last' — last in a group (bubble only, tight spacing)
- */
 export type GroupPosition = "solo" | "first" | "middle" | "last";
 
 export function MessageItem({
@@ -50,6 +44,7 @@ export function MessageItem({
   isTeacher,
   projectId,
   groupPosition = "solo",
+  watermarkReaders = [],
 }: {
   message: Message;
   currentUserId: string;
@@ -57,6 +52,7 @@ export function MessageItem({
   isTeacher: boolean;
   projectId: string;
   groupPosition?: GroupPosition;
+  watermarkReaders?: Reader[];
 }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(message.body);
@@ -122,7 +118,6 @@ export function MessageItem({
     });
   }
 
-  // Deleted message — centered, minimal
   if (isDeleted) {
     return (
       <div
@@ -143,11 +138,10 @@ export function MessageItem({
     );
   }
 
-  // Spacing varies by group position
   const topSpacing =
     groupPosition === "solo" || groupPosition === "first" ? "mt-4" : "mt-0.5";
 
-  // ===== OWN MESSAGE (right-aligned, navy bubble) =====
+  // ===== OWN MESSAGE (right-aligned navy bubble) =====
   if (isOwn) {
     return (
       <div
@@ -261,6 +255,8 @@ export function MessageItem({
               )}
             </div>
           )}
+
+          <ReadWatermark readers={watermarkReaders} />
         </div>
 
         {showReport && (
@@ -274,7 +270,7 @@ export function MessageItem({
     );
   }
 
-  // ===== OTHERS' MESSAGE (left-aligned, light bubble) =====
+  // ===== OTHERS' MESSAGE (left-aligned light bubble) =====
   return (
     <div
       id={`msg-${message.id}`}
@@ -414,6 +410,8 @@ export function MessageItem({
             )}
           </div>
         )}
+
+        <ReadWatermark readers={watermarkReaders} />
       </div>
 
       {showReport && (
@@ -427,7 +425,6 @@ export function MessageItem({
   );
 }
 
-// Bubble corner radius varies by position in a group for iMessage-style grouping.
 function bubbleCornersOwn(pos: GroupPosition): string {
   switch (pos) {
     case "solo":

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
@@ -8,6 +9,7 @@ import { MarkAsReadOnMount } from "@/components/mark-as-read";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { HighlightScroll } from "@/components/highlight-scroll";
 import { initials, relativeTime } from "@/lib/format";
+import type { Reader } from "@/components/read-watermark";
 
 const ROLE_COLORS: Record<string, string> = {
   student: "bg-role-student/15 text-role-student",
@@ -17,7 +19,7 @@ const ROLE_COLORS: Record<string, string> = {
   district_admin: "bg-role-admin/15 text-role-admin",
 };
 
-const GROUP_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
+const GROUP_WINDOW_MS = 3 * 60 * 1000;
 
 type MessageRow = {
   id: string;
@@ -27,14 +29,6 @@ type MessageRow = {
   pending_review?: boolean | null;
 };
 
-/**
- * Decide each message's group position based on neighbors.
- * Rules:
- *   - Deleted messages break grouping (always solo)
- *   - Pending-review state change breaks grouping (separate from normal)
- *   - Different sender breaks grouping
- *   - Gap > 3 min breaks grouping
- */
 function computeGroupPositions(messages: MessageRow[]): GroupPosition[] {
   const positions: GroupPosition[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -66,6 +60,54 @@ function computeGroupPositions(messages: MessageRow[]): GroupPosition[] {
     else positions.push("last");
   }
   return positions;
+}
+
+/**
+ * For each watermark reader, find the index of the latest visible message
+ * whose created_at <= their last_read_at. Returns a map:
+ * messageIndex -> Reader[] to display under that message.
+ *
+ * "Visible" = not deleted, not pending review.
+ * Readers with no qualifying message (e.g., they've never opened the thread)
+ * are omitted. Readers are deduplicated per message and sorted by lastReadAt desc.
+ */
+function computeWatermarks(
+  messages: Array<{ id: string; created_at: string; deleted_at: string | null; pending_review?: boolean | null }>,
+  reads: Array<Reader>
+): Map<number, Reader[]> {
+  const result = new Map<number, Reader[]>();
+  if (messages.length === 0 || reads.length === 0) return result;
+
+  for (const reader of reads) {
+    const readAt = new Date(reader.lastReadAt).getTime();
+    let lastIdx = -1;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.deleted_at) continue;
+      if (m.pending_review) continue;
+      const msgTime = new Date(m.created_at).getTime();
+      if (msgTime <= readAt) {
+        lastIdx = i;
+      } else {
+        break;
+      }
+    }
+    if (lastIdx === -1) continue;
+    const arr = result.get(lastIdx) ?? [];
+    arr.push(reader);
+    result.set(lastIdx, arr);
+  }
+
+  // Sort each bucket by most-recently-read first for consistent visual order
+  for (const [k, arr] of result) {
+    arr.sort(
+      (a, b) =>
+        new Date(b.lastReadAt).getTime() - new Date(a.lastReadAt).getTime()
+    );
+    result.set(k, arr);
+  }
+
+  return result;
 }
 
 export default async function ProjectPage({
@@ -128,6 +170,46 @@ export default async function ProjectPage({
   const groupPositions = computeGroupPositions(msgList as MessageRow[]);
   const pendingCount = msgList.filter((m) => m.pending_review).length;
 
+  // --- Read watermarks ---
+  // Fetch last_read_at for every member except the current user.
+  // Admins who aren't members are excluded (they shouldn't "stamp" reads).
+  const memberIds = (members ?? []).map((m) => m.user_id).filter((uid) => uid !== user.id);
+
+  let readers: Reader[] = [];
+  if (memberIds.length > 0) {
+    // Use admin client to bypass RLS on message_reads — we've already verified
+    // the current user is authorized to view this project above.
+    const admin = createAdminClient();
+    const { data: reads } = await admin
+      .from("message_reads")
+      .select("user_id, last_read_at")
+      .eq("project_id", id)
+      .in("user_id", memberIds);
+
+    const memberById = new Map(
+      (members ?? []).map((m) => [
+        m.user_id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        m.user as any,
+      ])
+    );
+
+    readers = (reads ?? [])
+      .map((r) => {
+        const u = memberById.get(r.user_id);
+        if (!u) return null;
+        return {
+          userId: r.user_id,
+          fullName: u.full_name ?? "Unknown",
+          role: u.role ?? "student",
+          lastReadAt: r.last_read_at,
+        } as Reader;
+      })
+      .filter((x): x is Reader => x !== null);
+  }
+
+  const watermarkMap = computeWatermarks(msgList, readers);
+
   return (
     <main className="min-h-screen bg-[#F2F5FA] text-foreground">
       <AppHeader
@@ -184,6 +266,7 @@ export default async function ProjectPage({
                     isTeacher={isTeacher}
                     projectId={id}
                     groupPosition={groupPositions[i]}
+                    watermarkReaders={watermarkMap.get(i) ?? []}
                   />
                 ))}
               </div>
