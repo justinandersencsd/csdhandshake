@@ -105,18 +105,18 @@ export default async function Home() {
   const totalActive = activeProjects.length;
 
   return (
-    <main className="min-h-screen bg-surface text-foreground">
+    <main className="min-h-screen bg-[#F2F5FA] text-foreground">
       <AppHeader
         profile={profile}
         canInvite={canInvite}
         canCreateProject={canCreate}
       />
 
-      <div className="mx-auto max-w-6xl px-6 py-12 space-y-10">
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
         {/* Greeting */}
         <div className="flex items-end justify-between flex-wrap gap-4">
-          <div className="space-y-1.5">
-            <h1 className="font-serif text-4xl sm:text-5xl text-navy leading-none">
+          <div className="space-y-1">
+            <h1 className="font-serif text-3xl sm:text-4xl text-navy leading-none">
               <span className="italic">Welcome back,</span> {firstName}
             </h1>
             <p className="text-sm text-neutral-dark">
@@ -130,7 +130,7 @@ export default async function Home() {
               <div className="text-[11px] uppercase tracking-widest text-neutral-dark">
                 Organization
               </div>
-              <div className="font-serif text-xl text-navy">
+              <div className="font-serif text-lg text-navy">
                 {profile.organization}
               </div>
             </div>
@@ -138,7 +138,7 @@ export default async function Home() {
         </div>
 
         {/* Active projects */}
-        <section className="space-y-4">
+        <section className="space-y-3">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
               Active projects
@@ -169,7 +169,7 @@ export default async function Home() {
 
         {/* Archived */}
         {archivedProjects.length > 0 && (
-          <section className="space-y-4">
+          <section className="space-y-3">
             <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
               Archived
             </h2>

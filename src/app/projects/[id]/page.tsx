@@ -3,9 +3,34 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { MessageComposer } from "@/components/message-composer";
 import { MessageItem } from "@/components/message-item";
-import { RoleBadge } from "@/components/role-badge";
 import { AppHeader } from "@/components/app-header";
 import { initials } from "@/lib/format";
+
+type Role = "student" | "partner" | "teacher" | "school_admin" | "district_admin";
+
+const roleColor: Record<string, string> = {
+  student: "bg-role-student-bg text-role-student-text",
+  partner: "bg-role-partner-bg text-role-partner-text",
+  teacher: "bg-role-teacher-bg text-role-teacher-text",
+  school_admin: "bg-role-admin-bg text-role-admin-text",
+  district_admin: "bg-role-admin-bg text-role-admin-text",
+};
+
+const roleLabel: Record<string, string> = {
+  student: "Student",
+  partner: "Partner",
+  teacher: "Teacher",
+  school_admin: "School Admin",
+  district_admin: "District Admin",
+};
+
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
 
 export default async function ProjectThreadPage({
   params,
@@ -41,7 +66,10 @@ export default async function ProjectThreadPage({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, status, partner_organization, school_id, created_by, archived_at"
+      `
+      id, name, description, status, partner_organization, school_id, created_by, archived_at, created_at,
+      school:schools(name)
+    `
     )
     .eq("id", id)
     .maybeSingle();
@@ -50,7 +78,7 @@ export default async function ProjectThreadPage({
 
   const { data: members } = await supabase
     .from("project_members")
-    .select("project_role, user:users!user_id(id, full_name, role)")
+    .select("project_role, added_at, user:users!user_id(id, full_name, role, organization)")
     .eq("project_id", id)
     .is("left_at", null);
 
@@ -79,9 +107,13 @@ export default async function ProjectThreadPage({
   const ownerName = (ownerMember?.user as any)?.full_name ?? "Unknown";
 
   const archived = project.status === "archived";
+  const visibleMessages = (messages ?? []).filter((m) => !m.deleted_at || isAdmin);
+  const messageCount = visibleMessages.length;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const schoolName = (project.school as any)?.name ?? null;
 
   return (
-    <main className="min-h-screen bg-surface text-foreground flex flex-col">
+    <main className="min-h-screen bg-[#F2F5FA] text-foreground flex flex-col">
       <AppHeader
         profile={profile}
         canInvite={canInvite}
@@ -90,7 +122,7 @@ export default async function ProjectThreadPage({
 
       {/* Project context strip */}
       <div className="border-b border-brand-border bg-surface">
-        <div className="mx-auto max-w-4xl px-6 py-5 flex items-center justify-between gap-4">
+        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <Link
               href="/"
@@ -110,6 +142,11 @@ export default async function ProjectThreadPage({
                 <h1 className="font-serif text-2xl text-navy leading-none truncate">
                   {project.name}
                 </h1>
+                {archived && (
+                  <span className="text-[10px] uppercase tracking-widest bg-muted text-neutral-dark px-2 py-0.5 rounded-full shrink-0">
+                    Archived
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 text-xs text-neutral-dark ml-[18px]">
                 {project.partner_organization && (
@@ -121,129 +158,188 @@ export default async function ProjectThreadPage({
                   </>
                 )}
                 <span>Owner: {ownerName}</span>
-                {archived && (
+                {messageCount > 0 && (
                   <>
                     <span className="text-brand-border">·</span>
-                    <span className="uppercase tracking-wider text-[10px] text-warning-text font-medium">
-                      Archived
+                    <span>
+                      {messageCount} message{messageCount === 1 ? "" : "s"}
                     </span>
                   </>
                 )}
               </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="flex -space-x-1.5">
-              {(members ?? []).slice(0, 5).map((m) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const u = m.user as any;
-                if (!u) return null;
-                const color =
-                  u.role === "student"
-                    ? "bg-role-student-bg text-role-student-text"
-                    : u.role === "partner"
-                    ? "bg-role-partner-bg text-role-partner-text"
-                    : u.role === "teacher"
-                    ? "bg-role-teacher-bg text-role-teacher-text"
-                    : "bg-role-admin-bg text-role-admin-text";
-                return (
-                  <div
-                    key={u.id}
-                    title={`${u.full_name} (${u.role.replace("_", " ")})`}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium border-2 border-surface ${color}`}
-                  >
-                    {initials(u.full_name)}
+      {/* Content: messages + sidebar */}
+      <div className="flex-1 flex flex-col lg:flex-row">
+        {/* Messages column */}
+        <div className="flex-1 flex flex-col bg-surface lg:border-r border-brand-border min-w-0">
+          <div className="flex-1">
+            <div className="mx-auto max-w-3xl px-6 py-6">
+              {!isMember && isAdmin && (
+                <div className="bg-accent text-navy text-sm p-3 rounded-md mb-6 border border-brand-border flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-navy shrink-0" />
+                  You&apos;re viewing this project as an admin. Admin views are
+                  logged.
+                </div>
+              )}
+
+              {visibleMessages.length === 0 ? (
+                <div className="flex items-center justify-center min-h-[400px]">
+                  <div className="text-center space-y-2 px-8">
+                    <p className="font-serif text-3xl text-navy italic">
+                      Quiet here
+                    </p>
+                    <p className="text-sm text-neutral-dark">
+                      {isMember
+                        ? "Be the first to post below."
+                        : "No messages yet in this project."}
+                    </p>
                   </div>
-                );
-              })}
-              {(members?.length ?? 0) > 5 && (
-                <div className="w-7 h-7 rounded-full bg-muted text-neutral-dark text-[10px] flex items-center justify-center border-2 border-surface font-medium">
-                  +{(members?.length ?? 0) - 5}
+                </div>
+              ) : (
+                <div className="divide-y divide-brand-border">
+                  {visibleMessages.map((m) => (
+                    <MessageItem
+                      key={m.id}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      message={m as any}
+                      currentUserId={user.id}
+                      isAdmin={isAdmin}
+                      projectId={id}
+                      projectArchived={archived}
+                    />
+                  ))}
                 </div>
               )}
             </div>
+          </div>
+
+          {isMember && (
+            <div className="sticky bottom-0 bg-surface">
+              <div className="mx-auto max-w-3xl">
+                <MessageComposer projectId={id} disabled={archived} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 border-brand-border">
+          <div className="p-6 space-y-6 lg:sticky lg:top-14">
+            {/* About */}
+            <section className="space-y-2.5">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
+                About
+              </h3>
+              {project.description ? (
+                <p className="text-sm text-navy/80 leading-relaxed">
+                  {project.description}
+                </p>
+              ) : (
+                <p className="text-sm text-neutral-dark italic">
+                  No description added
+                </p>
+              )}
+              <dl className="text-xs text-neutral-dark space-y-1 pt-1">
+                {schoolName && (
+                  <div>
+                    <dt className="inline text-neutral-dark">School: </dt>
+                    <dd className="inline text-navy font-medium">
+                      {schoolName}
+                    </dd>
+                  </div>
+                )}
+                {project.created_at && (
+                  <div>
+                    <dt className="inline text-neutral-dark">Started: </dt>
+                    <dd className="inline text-navy font-medium">
+                      {formatDate(project.created_at)}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </section>
+
+            {/* Partner */}
+            {project.partner_organization && (
+              <section className="space-y-2">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
+                  Partner
+                </h3>
+                <div className="bg-role-partner-bg text-role-partner-text px-4 py-3 rounded-lg">
+                  <div className="font-serif text-lg leading-tight">
+                    {project.partner_organization}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* Members */}
+            <section className="space-y-3">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
+                Members {members?.length ? `· ${members.length}` : ""}
+              </h3>
+              <ul className="space-y-2.5">
+                {(members ?? []).map((m) => {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const u = m.user as any;
+                  if (!u) return null;
+                  const role = u.role as Role;
+                  return (
+                    <li key={u.id} className="flex items-start gap-2.5">
+                      <div
+                        className={`h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-medium shrink-0 ${
+                          roleColor[role] ?? "bg-muted text-foreground"
+                        }`}
+                        title={u.full_name}
+                      >
+                        {initials(u.full_name)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-navy font-medium truncate">
+                          {u.full_name}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px] text-neutral-dark">
+                          <span>{roleLabel[role] ?? role}</span>
+                          {m.project_role === "owner" && (
+                            <>
+                              <span className="text-brand-border">·</span>
+                              <span className="uppercase tracking-wider">
+                                Owner
+                              </span>
+                            </>
+                          )}
+                          {u.organization && (
+                            <>
+                              <span className="text-brand-border">·</span>
+                              <span className="truncate">{u.organization}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+
+            {/* Settings link */}
             {canSettings && (
-              <Link
-                href={`/projects/${id}/settings`}
-                className="text-sm text-neutral-dark hover:text-navy transition"
-              >
-                Settings
-              </Link>
+              <div className="pt-2 border-t border-brand-border">
+                <Link
+                  href={`/projects/${id}/settings`}
+                  className="inline-flex items-center gap-1 text-sm text-navy hover:text-navy-soft transition font-medium"
+                >
+                  Project settings →
+                </Link>
+              </div>
             )}
           </div>
-        </div>
+        </aside>
       </div>
-
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6">
-          {!isMember && isAdmin && (
-            <div className="bg-accent text-navy text-sm p-3 rounded-md mb-6 border border-brand-border">
-              You&apos;re viewing this project as an admin. Admin views are logged.
-            </div>
-          )}
-
-          {!messages || messages.length === 0 ? (
-            <div className="border border-dashed border-brand-border rounded-xl px-8 py-16 bg-surface text-center my-4">
-              <p className="font-serif text-2xl text-navy italic mb-1">
-                Quiet here
-              </p>
-              <p className="text-sm text-neutral-dark">
-                Be the first to post below.
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-brand-border">
-              {messages.map((m) => (
-                <MessageItem
-                  key={m.id}
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  message={m as any}
-                  currentUserId={user.id}
-                  isAdmin={isAdmin}
-                  projectId={id}
-                  projectArchived={archived}
-                />
-              ))}
-            </div>
-          )}
-
-          <details className="mt-8 text-sm group">
-            <summary className="cursor-pointer text-neutral-dark hover:text-navy inline-flex items-center gap-1.5">
-              <span className="text-[11px] uppercase tracking-widest">
-                {members?.length ?? 0} member{members?.length === 1 ? "" : "s"}
-              </span>
-              <span className="text-xs group-open:rotate-90 transition-transform">›</span>
-            </summary>
-            <ul className="mt-3 space-y-1.5">
-              {(members ?? []).map((m) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const u = m.user as any;
-                if (!u) return null;
-                return (
-                  <li key={u.id} className="flex items-center gap-2 text-sm">
-                    <span className="text-navy">{u.full_name}</span>
-                    <RoleBadge role={u.role} size="xs" />
-                    {m.project_role === "owner" && (
-                      <span className="text-[10px] uppercase tracking-wider text-neutral-dark">
-                        Owner
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </details>
-        </div>
-      </div>
-
-      {isMember && (
-        <div className="sticky bottom-0 bg-surface">
-          <div className="mx-auto max-w-4xl">
-            <MessageComposer projectId={id} disabled={archived} />
-          </div>
-        </div>
-      )}
     </main>
   );
 }

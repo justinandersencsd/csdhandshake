@@ -33,23 +33,25 @@ export function ProjectCard({
   return (
     <Link
       href={`/projects/${project.id}`}
-      className={`group relative block bg-surface border border-brand-border rounded-xl p-5 transition-all duration-200 hover:border-navy/30 hover:shadow-[0_1px_2px_rgba(22,40,68,0.05),0_8px_24px_-8px_rgba(22,40,68,0.15)] hover:-translate-y-0.5 ${
+      className={`group relative block bg-surface border border-brand-border rounded-xl p-5 pl-6 overflow-hidden transition-all duration-200 hover:border-navy/30 hover:shadow-[0_1px_2px_rgba(22,40,68,0.05),0_8px_24px_-8px_rgba(22,40,68,0.15)] hover:-translate-y-0.5 ${
         archived ? "opacity-60" : ""
       }`}
     >
+      {/* Left accent bar */}
+      <div
+        className={`absolute left-0 top-4 bottom-4 w-[3px] rounded-full transition-colors ${
+          archived
+            ? "bg-brand-border"
+            : "bg-brand-accent group-hover:bg-navy"
+        }`}
+        aria-hidden="true"
+      />
+
       {/* Title row */}
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span
-            className={`h-2 w-2 rounded-full shrink-0 ${
-              archived ? "bg-neutral-dark/30" : "bg-success-text"
-            }`}
-            aria-hidden="true"
-          />
-          <h3 className="font-serif text-xl text-navy leading-tight truncate">
-            {project.name}
-          </h3>
-        </div>
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <h3 className="font-serif text-xl text-navy leading-tight truncate">
+          {project.name}
+        </h3>
         {archived && (
           <span className="shrink-0 text-[10px] uppercase tracking-widest bg-muted text-neutral-dark px-2 py-0.5 rounded-full">
             Archived
@@ -58,7 +60,7 @@ export function ProjectCard({
       </div>
 
       {/* Metadata */}
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-neutral-dark mb-4 ml-[18px]">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-neutral-dark mb-3">
         {project.partner_organization ? (
           <>
             <span className="text-navy font-medium">
@@ -87,7 +89,7 @@ export function ProjectCard({
                 </span>
                 : {truncate(lastMessage.body, 90)}
               </p>
-              <p className="text-[11px] text-neutral-dark/70 mt-1.5 uppercase tracking-wider">
+              <p className="text-[11px] text-neutral-dark/70 mt-1 uppercase tracking-wider">
                 {relativeTime(lastMessage.created_at)}
               </p>
             </>
