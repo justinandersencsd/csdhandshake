@@ -167,13 +167,21 @@ export default async function Home() {
           )}
         </section>
 
-        {/* Archived */}
+        {/* Archived — collapsed by default */}
         {archivedProjects.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
-              Archived
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+          <details className="group space-y-3 [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer flex items-center justify-between py-2 text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark hover:text-navy transition">
+              <span className="flex items-center gap-2">
+                <span className="inline-block transition-transform duration-200 group-open:rotate-90 text-sm leading-none">
+                  ›
+                </span>
+                Archived · {archivedProjects.length}
+              </span>
+              <span className="text-[11px] opacity-0 group-open:opacity-100 transition-opacity text-neutral-dark/70 normal-case tracking-normal">
+                click to collapse
+              </span>
+            </summary>
+            <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 pt-1">
               {archivedProjects.map((p) => (
                 <ProjectCard
                   key={p.id}
@@ -184,7 +192,7 @@ export default async function Home() {
                 />
               ))}
             </div>
-          </section>
+          </details>
         )}
 
         {/* Subtle footer mark */}

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendInvitationEmail } from "@/lib/email/send-invitation";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import crypto from "crypto";
 
 async function requireOwnerOrAdmin(projectId: string) {
@@ -36,6 +37,12 @@ async function requireOwnerOrAdmin(projectId: string) {
   }
 
   return { user, profile, project };
+}
+
+function invalidateProject(projectId: string) {
+  revalidatePath("/");
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/settings`);
 }
 
 export async function updateProject(formData: FormData) {
@@ -72,11 +79,14 @@ export async function updateProject(formData: FormData) {
     metadata: { fields: ["name", "description", "partner_organization"] },
   });
 
+  invalidateProject(id);
   redirect(`/projects/${id}/settings?success=Project+updated`);
 }
 
 export async function archiveProject(formData: FormData) {
   const id = formData.get("id") as string;
+  if (!id) redirect("/?error=Missing+project+id");
+
   const { user } = await requireOwnerOrAdmin(id);
 
   const supabase = await createClient();
@@ -103,11 +113,14 @@ export async function archiveProject(formData: FormData) {
     target_id: id,
   });
 
+  invalidateProject(id);
   redirect(`/projects/${id}/settings?success=Project+archived`);
 }
 
 export async function unarchiveProject(formData: FormData) {
   const id = formData.get("id") as string;
+  if (!id) redirect("/?error=Missing+project+id");
+
   const { user } = await requireOwnerOrAdmin(id);
 
   const supabase = await createClient();
@@ -130,11 +143,10 @@ export async function unarchiveProject(formData: FormData) {
     target_id: id,
   });
 
+  invalidateProject(id);
   redirect(`/projects/${id}/settings?success=Project+unarchived`);
 }
 
-// Lookup what we know about this email for this project.
-// Returns a state string so the client can decide what UI to show next.
 export type LookupResult =
   | { state: "existing_member"; fullName: string }
   | {
@@ -197,7 +209,6 @@ export async function lookupMemberEmail(
   };
 }
 
-// Add (or re-add) an existing user to the project.
 export async function addExistingMember(formData: FormData) {
   const project_id = formData.get("project_id") as string;
   const user_id = formData.get("user_id") as string;
@@ -210,7 +221,6 @@ export async function addExistingMember(formData: FormData) {
 
   const admin = createAdminClient();
 
-  // Upsert: insert a new row or reset left_at if a row exists
   const { error } = await admin
     .from("project_members")
     .upsert(
@@ -239,10 +249,10 @@ export async function addExistingMember(formData: FormData) {
     metadata: { added_user: user_id },
   });
 
+  invalidateProject(project_id);
   redirect(`/projects/${project_id}/settings?success=Member+added`);
 }
 
-// Invite a brand-new user to the project (creates invitation + sends email).
 export async function inviteNewMember(formData: FormData) {
   const project_id = formData.get("project_id") as string;
   const email = (formData.get("email") as string)?.trim().toLowerCase();
@@ -314,6 +324,7 @@ export async function inviteNewMember(formData: FormData) {
     metadata: { email, role, project_id },
   });
 
+  invalidateProject(project_id);
   redirect(
     `/projects/${project_id}/settings?success=Invitation+sent+to+${encodeURIComponent(email)}`
   );
@@ -346,5 +357,6 @@ export async function removeMember(formData: FormData) {
     metadata: { removed_user: user_id },
   });
 
+  invalidateProject(project_id);
   redirect(`/projects/${project_id}/settings?success=Member+removed`);
 }
