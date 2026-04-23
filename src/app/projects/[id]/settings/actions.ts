@@ -420,3 +420,123 @@ export async function removeMember(formData: FormData) {
   invalidateProject(project_id);
   redirect(`/projects/${project_id}/settings?success=Member+removed`);
 }
+
+export async function resendInvitation(formData: FormData) {
+  const invitation_id = formData.get("invitation_id") as string;
+  const project_id = formData.get("project_id") as string;
+  if (!invitation_id || !project_id) {
+    redirect(`/projects/${project_id}/settings?error=Missing+data`);
+  }
+
+  const { user, profile, project } = await requireOwnerOrAdmin(project_id);
+
+  const admin = createAdminClient();
+
+  const { data: invite } = await admin
+    .from("invitations")
+    .select("id, email, full_name, role, organization, accepted_at")
+    .eq("id", invitation_id)
+    .maybeSingle();
+
+  if (!invite) {
+    redirect(`/projects/${project_id}/settings?error=Invitation+not+found`);
+  }
+  if (invite.accepted_at) {
+    redirect(`/projects/${project_id}/settings?error=Already+accepted`);
+  }
+
+  // Generate a new token and extend expiry
+  const newToken = crypto.randomBytes(32).toString("hex");
+  const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: updateError } = await admin
+    .from("invitations")
+    .update({ token: newToken, expires_at: newExpiry })
+    .eq("id", invitation_id);
+
+  if (updateError) {
+    redirect(
+      `/projects/${project_id}/settings?error=${encodeURIComponent("Update failed: " + updateError.message)}`
+    );
+  }
+
+  const { data: school } = await admin
+    .from("schools")
+    .select("name")
+    .eq("id", project.school_id)
+    .maybeSingle();
+
+  const { data: proj } = await admin
+    .from("projects")
+    .select("name")
+    .eq("id", project_id)
+    .maybeSingle();
+
+  try {
+    await sendInvitationEmail({
+      to: invite.email,
+      inviteeName: invite.full_name,
+      inviterName: profile.full_name,
+      schoolName: school?.name ?? "Canyons School District",
+      projectName: proj?.name ?? null,
+      token: newToken,
+      role: invite.role as "student" | "partner",
+    });
+  } catch (e) {
+    redirect(
+      `/projects/${project_id}/settings?error=${encodeURIComponent("Email failed: " + (e as Error).message)}`
+    );
+  }
+
+  await admin.from("audit_events").insert({
+    user_id: user.id,
+    event_type: "invitation.resent",
+    target_type: "invitation",
+    target_id: invitation_id,
+    metadata: { email: invite.email },
+  });
+
+  invalidateProject(project_id);
+  redirect(
+    `/projects/${project_id}/settings?success=Invitation+resent+to+${encodeURIComponent(invite.email)}`
+  );
+}
+
+export async function cancelInvitation(formData: FormData) {
+  const invitation_id = formData.get("invitation_id") as string;
+  const project_id = formData.get("project_id") as string;
+  if (!invitation_id || !project_id) {
+    redirect(`/projects/${project_id}/settings?error=Missing+data`);
+  }
+
+  const { user } = await requireOwnerOrAdmin(project_id);
+
+  const admin = createAdminClient();
+  const { data: invite } = await admin
+    .from("invitations")
+    .select("email")
+    .eq("id", invitation_id)
+    .maybeSingle();
+
+  const { error } = await admin
+    .from("invitations")
+    .delete()
+    .eq("id", invitation_id);
+
+  if (error) {
+    redirect(
+      `/projects/${project_id}/settings?error=${encodeURIComponent("Cancel failed: " + error.message)}`
+    );
+  }
+
+  await admin.from("audit_events").insert({
+    user_id: user.id,
+    event_type: "invitation.cancelled",
+    target_type: "invitation",
+    target_id: invitation_id,
+    metadata: { email: invite?.email },
+  });
+
+  invalidateProject(project_id);
+  redirect(`/projects/${project_id}/settings?success=Invitation+cancelled`);
+}

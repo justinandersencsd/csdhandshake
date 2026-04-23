@@ -5,6 +5,8 @@ import { AppHeader } from "@/components/app-header";
 import { MessageComposer } from "@/components/message-composer";
 import { MessageItem } from "@/components/message-item";
 import { MarkAsReadOnMount } from "@/components/mark-as-read";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { HighlightScroll } from "@/components/highlight-scroll";
 import { initials, relativeTime } from "@/lib/format";
 
 const ROLE_COLORS: Record<string, string> = {
@@ -17,10 +19,14 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [k: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const highlight = typeof sp.highlight === "string" ? sp.highlight : null;
 
   const supabase = await createClient();
   const {
@@ -30,10 +36,14 @@ export default async function ProjectPage({
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, role, email, organization, school_id")
+    .select("full_name, role, email, organization, school_id, deactivated_at")
     .eq("id", user.id)
     .single();
   if (!profile) redirect("/login");
+  if (profile.deactivated_at) {
+    await supabase.auth.signOut();
+    redirect("/login?error=Your+account+has+been+deactivated.");
+  }
 
   const { data: project } = await supabase
     .from("projects")
@@ -74,15 +84,17 @@ export default async function ProjectPage({
       />
 
       <MarkAsReadOnMount projectId={id} />
+      <AutoRefresh intervalMs={15000} />
+      {highlight && <HighlightScroll messageId={highlight} />}
 
-      <div className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-[1fr_260px]">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8 grid gap-6 lg:gap-8 lg:grid-cols-[1fr_260px]">
         <div className="min-w-0 space-y-6">
           <div className="flex items-baseline justify-between gap-4 flex-wrap">
             <div className="space-y-1">
               <Link href="/" className="text-xs text-neutral-dark hover:text-navy">
                 ← All projects
               </Link>
-              <h1 className="font-serif text-3xl text-navy leading-tight">
+              <h1 className="font-serif text-2xl sm:text-3xl text-navy leading-tight">
                 {project.name}
               </h1>
               {project.status === "archived" && (
@@ -100,7 +112,7 @@ export default async function ProjectPage({
             </div>
           )}
 
-          <div className="bg-surface rounded-xl border border-brand-border p-5 space-y-6">
+          <div className="bg-surface rounded-xl border border-brand-border p-4 sm:p-5 space-y-6">
             {(!messages || messages.length === 0) ? (
               <p className="text-sm text-neutral-dark italic text-center py-8">
                 No messages yet. Start the conversation below.
@@ -123,7 +135,7 @@ export default async function ProjectPage({
           {project.status === "active" && <MessageComposer projectId={id} />}
         </div>
 
-        <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
+        <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start order-first lg:order-last">
           <div className="space-y-2">
             <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">About</div>
             {project.description ? (

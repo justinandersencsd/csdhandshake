@@ -26,21 +26,24 @@ export default async function AdminFlagsPage({
   if (!user) redirect("/login");
   const { data: profile } = await supabase
     .from("users")
-    .select("role, full_name, email, school_id, organization")
+    .select("role, full_name, email, school_id, organization, deactivated_at")
     .eq("id", user.id)
     .single();
   if (!profile) redirect("/login");
+  if (profile.deactivated_at) {
+    await supabase.auth.signOut();
+    redirect("/login?error=Your+account+has+been+deactivated.");
+  }
   if (profile.role !== "school_admin" && profile.role !== "district_admin") {
     redirect("/");
   }
   const isDistrict = profile.role === "district_admin";
   const admin = createAdminClient();
 
-  // Content flags
   const flagsQ = admin
     .from("content_flags")
     .select(
-      "id, flag_type, matched_text, was_blocked, status, created_at, project:projects!project_id(id, name, school_id), sender:users!sender_id(full_name, role)"
+      "id, message_id, flag_type, matched_text, was_blocked, status, created_at, project:projects!project_id(id, name, school_id), sender:users!sender_id(full_name, role)"
     )
     .order("created_at", { ascending: false })
     .limit(100);
@@ -48,7 +51,6 @@ export default async function AdminFlagsPage({
 
   const { data: flags } = await flagsQ;
 
-  // Reports
   const reportsQ = admin
     .from("message_reports")
     .select(
@@ -60,7 +62,6 @@ export default async function AdminFlagsPage({
 
   const { data: reports } = await reportsQ;
 
-  // Filter by school if not district admin
   const scopedFlags = (flags ?? []).filter((f) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const p = f.project as any;
@@ -75,20 +76,20 @@ export default async function AdminFlagsPage({
   return (
     <main className="min-h-screen bg-[#F2F5FA] text-foreground">
       <AppHeader profile={profile} canInvite canCreateProject />
-      <div className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-[200px_1fr]">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8 grid gap-6 lg:gap-8 lg:grid-cols-[200px_1fr]">
         <aside className="lg:sticky lg:top-24 lg:self-start">
           <AdminNav active="/admin/flags" />
         </aside>
 
         <div className="space-y-6 min-w-0">
           <div>
-            <h1 className="font-serif text-3xl text-navy">Flagged content</h1>
+            <h1 className="font-serif text-2xl sm:text-3xl text-navy">Flagged content</h1>
             <p className="text-sm text-neutral-dark mt-1">
               Messages flagged by the filter, plus user reports.
             </p>
           </div>
 
-          <div className="flex gap-1 text-xs">
+          <div className="flex gap-1 text-xs flex-wrap">
             {(["pending", "escalated", "dismissed", "all"] as const).map((f) => (
               <Link
                 key={f}
@@ -104,7 +105,7 @@ export default async function AdminFlagsPage({
             ))}
           </div>
 
-          <section className="bg-surface rounded-xl border border-brand-border p-6 space-y-4">
+          <section className="bg-surface rounded-xl border border-brand-border p-4 sm:p-6 space-y-4">
             <h2 className="font-serif text-xl text-navy">
               Content filter flags ({scopedFlags.length})
             </h2>
@@ -119,6 +120,9 @@ export default async function AdminFlagsPage({
                   const p = f.project as any;
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const s = f.sender as any;
+                  const contextUrl = f.message_id
+                    ? `/projects/${p?.id}?highlight=${f.message_id}`
+                    : `/projects/${p?.id}`;
                   return (
                     <li
                       key={f.id}
@@ -149,12 +153,23 @@ export default async function AdminFlagsPage({
                           <div className="text-xs text-neutral-dark">
                             in{" "}
                             <Link
-                              href={`/projects/${p?.id}`}
-                              className="hover:text-navy"
+                              href={contextUrl}
+                              className="hover:text-navy underline"
                             >
                               {p?.name}
                             </Link>{" "}
                             · {relativeTime(f.created_at)}
+                            {f.message_id && (
+                              <>
+                                {" · "}
+                                <Link
+                                  href={contextUrl}
+                                  className="hover:text-navy underline"
+                                >
+                                  Review in context →
+                                </Link>
+                              </>
+                            )}
                           </div>
                         </div>
                         {f.status === "pending" && (
@@ -184,7 +199,7 @@ export default async function AdminFlagsPage({
             )}
           </section>
 
-          <section className="bg-surface rounded-xl border border-brand-border p-6 space-y-4">
+          <section className="bg-surface rounded-xl border border-brand-border p-4 sm:p-6 space-y-4">
             <h2 className="font-serif text-xl text-navy">
               User reports ({scopedReports.length})
             </h2>
@@ -203,6 +218,9 @@ export default async function AdminFlagsPage({
                   const msg = r.message as any;
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const msgSender = msg?.sender as any;
+                  const contextUrl = msg?.id
+                    ? `/projects/${p?.id}?highlight=${msg.id}`
+                    : `/projects/${p?.id}`;
                   return (
                     <li
                       key={r.id}
@@ -227,12 +245,23 @@ export default async function AdminFlagsPage({
                           <div className="text-xs text-neutral-dark">
                             in{" "}
                             <Link
-                              href={`/projects/${p?.id}`}
-                              className="hover:text-navy"
+                              href={contextUrl}
+                              className="hover:text-navy underline"
                             >
                               {p?.name}
                             </Link>{" "}
                             · {relativeTime(r.created_at)}
+                            {msg?.id && (
+                              <>
+                                {" · "}
+                                <Link
+                                  href={contextUrl}
+                                  className="hover:text-navy underline"
+                                >
+                                  Review in context →
+                                </Link>
+                              </>
+                            )}
                           </div>
                         </div>
                         {r.status === "pending" && (

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { ProjectCard } from "@/components/project-card";
 import { AppHeader } from "@/components/app-header";
 import { TabTitleBadge } from "@/components/tab-title-badge";
@@ -14,11 +15,15 @@ export default async function Home() {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, role, email, coc_accepted_at, organization, school_id")
+    .select("full_name, role, email, coc_accepted_at, organization, school_id, deactivated_at")
     .eq("id", user.id)
     .single();
 
   if (!profile) redirect("/login");
+  if (profile.deactivated_at) {
+    await supabase.auth.signOut();
+    redirect("/login?error=Your+account+has+been+deactivated.");
+  }
 
   if (!profile.coc_accepted_at) {
     if (profile.role === "partner") redirect("/onboarding/coc");
@@ -73,7 +78,6 @@ export default async function Home() {
     lastMessages.map((lm) => [lm.projectId, lm.message])
   );
 
-  // Unread counts per project
   const { data: reads } = projectIds.length
     ? await supabase
         .from("message_reads")
@@ -146,10 +150,10 @@ export default async function Home() {
         canCreateProject={canCreate}
       />
 
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-10 space-y-8">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div className="space-y-1">
-            <h1 className="font-serif text-3xl sm:text-4xl text-navy leading-none">
+            <h1 className="font-serif text-2xl sm:text-4xl text-navy leading-none">
               <span className="italic">Welcome back,</span> {firstName}
             </h1>
             <p className="text-sm text-neutral-dark">
@@ -233,11 +237,13 @@ export default async function Home() {
           </details>
         )}
 
-        <div className="pt-12 pb-2 text-center">
-          <p className="text-[11px] text-neutral-dark/60 uppercase tracking-[0.2em]">
-            Canyons School District · Handshake
-          </p>
-        </div>
+        <footer className="pt-12 pb-2 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-[11px] text-neutral-dark/60 uppercase tracking-[0.2em]">
+          <span>Canyons School District · Handshake</span>
+          <div className="flex gap-3">
+            <Link href="/legal/terms" className="hover:text-navy">Terms</Link>
+            <Link href="/legal/privacy" className="hover:text-navy">Privacy</Link>
+          </div>
+        </footer>
       </div>
     </main>
   );
@@ -250,9 +256,9 @@ function EmptyState({ role }: { role: string }) {
     student: "You haven't been added to any projects yet. Your teacher will invite you.",
     partner: "You haven't been added to any projects yet.",
     school_admin:
-      "You're not a member of any projects. An admin dashboard with district-wide views is coming soon.",
+      "You're not a member of any projects. Visit /admin for the district overview.",
     district_admin:
-      "You're not a member of any projects. An admin dashboard with district-wide views is coming soon.",
+      "You're not a member of any projects. Visit /admin for the district overview.",
   } as Record<string, string>;
   return (
     <div className="border border-dashed border-brand-border rounded-xl px-8 py-12 bg-surface text-center">

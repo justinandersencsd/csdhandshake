@@ -50,8 +50,7 @@ export function MessageItem({
 
   const isOwn = message.sender_id === currentUserId;
   const isDeleted = !!message.deleted_at;
-  const canEdit =
-    isOwn && !isDeleted && isWithin5Min(message.created_at);
+  const canEdit = isOwn && !isDeleted && isWithin5Min(message.created_at);
   const canDelete = (isOwn || isAdmin) && !isDeleted;
   const canApprove = (isTeacher || isAdmin) && message.pending_review;
   const canReport = !isOwn && !isDeleted;
@@ -95,7 +94,7 @@ export function MessageItem({
 
   if (isDeleted) {
     return (
-      <div className="flex gap-3 py-2 text-xs text-neutral-dark italic">
+      <div id={`msg-${message.id}`} className="flex gap-3 py-2 text-xs text-neutral-dark italic transition-all">
         <div className="w-8 flex-shrink-0" />
         <div>
           Message deleted by {message.deleted_by === message.sender_id ? "sender" : "moderator"} · {relativeTime(message.deleted_at!)}
@@ -110,7 +109,7 @@ export function MessageItem({
   }
 
   return (
-    <div className="flex gap-3 group">
+    <div id={`msg-${message.id}`} className="flex gap-3 group p-2 -m-2 transition-all">
       <div className="flex-shrink-0 h-8 w-8 rounded-full bg-navy text-white flex items-center justify-center text-xs font-medium">
         {initials(senderName)}
       </div>
