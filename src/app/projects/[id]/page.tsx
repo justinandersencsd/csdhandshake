@@ -3,7 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { MessageComposer } from "@/components/message-composer";
-import { MessageItem } from "@/components/message-item";
+import { MessageItem, type GroupPosition } from "@/components/message-item";
 import { MarkAsReadOnMount } from "@/components/mark-as-read";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { HighlightScroll } from "@/components/highlight-scroll";
@@ -16,6 +16,57 @@ const ROLE_COLORS: Record<string, string> = {
   school_admin: "bg-role-admin/15 text-role-admin",
   district_admin: "bg-role-admin/15 text-role-admin",
 };
+
+const GROUP_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
+
+type MessageRow = {
+  id: string;
+  sender_id: string;
+  created_at: string;
+  deleted_at: string | null;
+  pending_review?: boolean | null;
+};
+
+/**
+ * Decide each message's group position based on neighbors.
+ * Rules:
+ *   - Deleted messages break grouping (always solo)
+ *   - Pending-review state change breaks grouping (separate from normal)
+ *   - Different sender breaks grouping
+ *   - Gap > 3 min breaks grouping
+ */
+function computeGroupPositions(messages: MessageRow[]): GroupPosition[] {
+  const positions: GroupPosition[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const prev = i > 0 ? messages[i - 1] : null;
+    const next = i < messages.length - 1 ? messages[i + 1] : null;
+
+    if (m.deleted_at) {
+      positions.push("solo");
+      continue;
+    }
+
+    const groupsWith = (a: MessageRow | null, b: MessageRow | null) => {
+      if (!a || !b) return false;
+      if (a.deleted_at || b.deleted_at) return false;
+      if (a.sender_id !== b.sender_id) return false;
+      if ((a.pending_review ?? false) !== (b.pending_review ?? false)) return false;
+      const dt =
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return dt >= 0 && dt <= GROUP_WINDOW_MS;
+    };
+
+    const prevSame = groupsWith(prev, m);
+    const nextSame = groupsWith(m, next);
+
+    if (!prevSame && !nextSame) positions.push("solo");
+    else if (!prevSame && nextSame) positions.push("first");
+    else if (prevSame && nextSame) positions.push("middle");
+    else positions.push("last");
+  }
+  return positions;
+}
 
 export default async function ProjectPage({
   params,
@@ -68,12 +119,14 @@ export default async function ProjectPage({
   const { data: messages } = await supabase
     .from("messages")
     .select(
-      "id, body, link_url, created_at, edited_at, deleted_at, deleted_by, sender_id, pending_review, sender:users!sender_id(full_name, role, organization)"
+      "id, body, link_url, attachment_path, attachment_name, attachment_size, attachment_mime, created_at, edited_at, deleted_at, deleted_by, sender_id, pending_review, sender:users!sender_id(full_name, role, organization)"
     )
     .eq("project_id", id)
     .order("created_at", { ascending: true });
 
-  const pendingCount = (messages ?? []).filter((m) => m.pending_review).length;
+  const msgList = messages ?? [];
+  const groupPositions = computeGroupPositions(msgList as MessageRow[]);
+  const pendingCount = msgList.filter((m) => m.pending_review).length;
 
   return (
     <main className="min-h-screen bg-[#F2F5FA] text-foreground">
@@ -107,28 +160,33 @@ export default async function ProjectPage({
 
           {(isTeacher || isAdmin) && pendingCount > 0 && (
             <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-navy">
-              <strong>{pendingCount}</strong> {pendingCount === 1 ? "message" : "messages"} pending your review.
-              Look for the &ldquo;Pending review&rdquo; tag below and click &ldquo;Approve&rdquo;.
+              <strong>{pendingCount}</strong>{" "}
+              {pendingCount === 1 ? "message" : "messages"} pending your
+              review. Look for the &ldquo;Pending review&rdquo; tag below and
+              click &ldquo;Approve&rdquo;.
             </div>
           )}
 
-          <div className="bg-surface rounded-xl border border-brand-border p-4 sm:p-5 space-y-6">
-            {(!messages || messages.length === 0) ? (
+          <div className="bg-surface rounded-xl border border-brand-border p-4 sm:p-5 min-h-[300px]">
+            {msgList.length === 0 ? (
               <p className="text-sm text-neutral-dark italic text-center py-8">
                 No messages yet. Start the conversation below.
               </p>
             ) : (
-              messages.map((m) => (
-                <MessageItem
-                  key={m.id}
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  message={m as any}
-                  currentUserId={user.id}
-                  isAdmin={isAdmin}
-                  isTeacher={isTeacher}
-                  projectId={id}
-                />
-              ))
+              <div className="space-y-0">
+                {msgList.map((m, i) => (
+                  <MessageItem
+                    key={m.id}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    message={m as any}
+                    currentUserId={user.id}
+                    isAdmin={isAdmin}
+                    isTeacher={isTeacher}
+                    projectId={id}
+                    groupPosition={groupPositions[i]}
+                  />
+                ))}
+              </div>
             )}
           </div>
 
@@ -137,7 +195,9 @@ export default async function ProjectPage({
 
         <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start order-first lg:order-last">
           <div className="space-y-2">
-            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">About</div>
+            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">
+              About
+            </div>
             {project.description ? (
               <p className="text-sm text-navy-soft">{project.description}</p>
             ) : (
@@ -154,7 +214,9 @@ export default async function ProjectPage({
 
           {project.partner_organization && (
             <div className="rounded-lg bg-warning/8 border border-warning/20 px-4 py-3 space-y-1">
-              <div className="text-[11px] uppercase tracking-wider text-neutral-dark">Partner</div>
+              <div className="text-[11px] uppercase tracking-wider text-neutral-dark">
+                Partner
+              </div>
               <div className="font-serif text-base text-navy italic">
                 {project.partner_organization}
               </div>
@@ -185,7 +247,9 @@ export default async function ProjectPage({
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`text-[9px] uppercase tracking-wider px-1 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}>
+                        <span
+                          className={`text-[9px] uppercase tracking-wider px-1 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}
+                        >
                           {u?.role?.replace("_", " ")}
                         </span>
                         {u?.organization && (

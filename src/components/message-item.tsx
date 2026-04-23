@@ -34,18 +34,29 @@ const ROLE_COLORS: Record<string, string> = {
   district_admin: "bg-role-admin/15 text-role-admin",
 };
 
+/**
+ * groupPosition:
+ *   'solo' — standalone message (show avatar + header + bubble)
+ *   'first' — first in a group (show avatar + header + bubble)
+ *   'middle' — middle of group (bubble only, tight spacing)
+ *   'last' — last in a group (bubble only, tight spacing)
+ */
+export type GroupPosition = "solo" | "first" | "middle" | "last";
+
 export function MessageItem({
   message,
   currentUserId,
   isAdmin,
   isTeacher,
   projectId,
+  groupPosition = "solo",
 }: {
   message: Message;
   currentUserId: string;
   isAdmin: boolean;
   isTeacher: boolean;
   projectId: string;
+  groupPosition?: GroupPosition;
 }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(message.body);
@@ -63,7 +74,9 @@ export function MessageItem({
   const senderName = message.sender?.full_name ?? "Unknown";
   const senderRole = message.sender?.role ?? "student";
 
-  // Lazy-fetch a signed URL for the attachment
+  const showHeader = groupPosition === "solo" || groupPosition === "first";
+  const showAvatar = showHeader && !isOwn;
+
   useEffect(() => {
     if (!message.attachment_path || isDeleted) return;
     let cancelled = false;
@@ -109,14 +122,19 @@ export function MessageItem({
     });
   }
 
+  // Deleted message — centered, minimal
   if (isDeleted) {
     return (
-      <div id={`msg-${message.id}`} className="flex gap-3 py-2 text-xs text-neutral-dark italic transition-all">
-        <div className="w-8 flex-shrink-0" />
-        <div>
-          Message deleted by {message.deleted_by === message.sender_id ? "sender" : "moderator"} · {relativeTime(message.deleted_at!)}
+      <div
+        id={`msg-${message.id}`}
+        className="flex justify-center py-1 text-[11px] text-neutral-dark italic transition-all"
+      >
+        <div className="text-center">
+          Message deleted by{" "}
+          {message.deleted_by === message.sender_id ? "sender" : "moderator"} ·{" "}
+          {relativeTime(message.deleted_at!)}
           {isAdmin && (
-            <div className="mt-1 text-xs text-neutral-dark/70 not-italic font-mono line-through">
+            <div className="mt-1 text-[11px] text-neutral-dark/70 not-italic font-mono line-through opacity-60">
               {message.body}
             </div>
           )}
@@ -125,37 +143,178 @@ export function MessageItem({
     );
   }
 
-  return (
-    <div id={`msg-${message.id}`} className="flex gap-3 group p-2 -m-2 transition-all">
-      <div className="flex-shrink-0 h-8 w-8 rounded-full bg-navy text-white flex items-center justify-center text-xs font-medium">
-        {initials(senderName)}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="font-medium text-sm text-navy">{senderName}</span>
-          <span
-            className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${ROLE_COLORS[senderRole] ?? "bg-neutral-100"}`}
-          >
-            {senderRole.replace("_", " ")}
-          </span>
-          {message.sender?.organization && (
-            <span className="text-xs text-neutral-dark">
-              · {message.sender.organization}
-            </span>
+  // Spacing varies by group position
+  const topSpacing =
+    groupPosition === "solo" || groupPosition === "first" ? "mt-4" : "mt-0.5";
+
+  // ===== OWN MESSAGE (right-aligned, navy bubble) =====
+  if (isOwn) {
+    return (
+      <div
+        id={`msg-${message.id}`}
+        className={`flex justify-end group ${topSpacing}`}
+      >
+        <div className="flex flex-col items-end max-w-[75%] min-w-0">
+          {showHeader && (
+            <div className="flex items-baseline gap-2 flex-wrap justify-end mb-1 px-1">
+              <span className="text-xs text-neutral-dark">
+                {relativeTime(message.created_at)}
+                {message.edited_at && <span className="ml-1">(edited)</span>}
+              </span>
+              {message.pending_review && (
+                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-warning/15 text-warning">
+                  Pending review
+                </span>
+              )}
+            </div>
           )}
-          <span className="text-xs text-neutral-dark">
-            · {relativeTime(message.created_at)}
-            {message.edited_at && <span className="ml-1">(edited)</span>}
-          </span>
-          {message.pending_review && (
-            <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-warning/15 text-warning">
-              Pending review
-            </span>
+
+          {editing ? (
+            <div className="w-full space-y-2">
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                className="w-full min-h-[60px] rounded-md border border-brand-border px-3 py-2 text-sm"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={submitEdit}
+                  disabled={isPending}
+                  className="px-3 py-1.5 rounded bg-navy text-white text-xs"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setEditing(false);
+                    setBody(message.body);
+                  }}
+                  disabled={isPending}
+                  className="px-3 py-1.5 rounded border border-brand-border text-xs"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className={`px-3.5 py-2 bg-navy text-white text-sm whitespace-pre-wrap break-words shadow-sm ${bubbleCornersOwn(groupPosition)}`}
+            >
+              {message.body}
+              {message.link_url && (
+                <div className="mt-1.5">
+                  <a
+                    href={message.link_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand-accent hover:text-white hover:underline text-xs break-all"
+                  >
+                    {message.link_url}
+                  </a>
+                </div>
+              )}
+              {message.attachment_path && (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-md bg-white/10 border border-white/20 px-3 py-1.5 text-xs max-w-full">
+                  <span>📎</span>
+                  {attachmentUrl ? (
+                    <a
+                      href={attachmentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-white hover:underline truncate"
+                    >
+                      {message.attachment_name ?? "Attachment"}
+                    </a>
+                  ) : (
+                    <span className="text-white/80 truncate">
+                      {message.attachment_name ?? "Attachment"}
+                    </span>
+                  )}
+                  {message.attachment_size != null && (
+                    <span className="text-white/60 flex-shrink-0">
+                      {formatBytes(message.attachment_size)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!editing && (
+            <div className="mt-1 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1">
+              {canEdit && (
+                <button
+                  onClick={() => setEditing(true)}
+                  className="text-neutral-dark hover:text-navy"
+                >
+                  Edit
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  onClick={submitDelete}
+                  disabled={isPending}
+                  className="text-neutral-dark hover:text-danger"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           )}
         </div>
 
+        {showReport && (
+          <ReportDialog
+            projectId={projectId}
+            messageId={message.id}
+            onClose={() => setShowReport(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ===== OTHERS' MESSAGE (left-aligned, light bubble) =====
+  return (
+    <div
+      id={`msg-${message.id}`}
+      className={`flex gap-2.5 group ${topSpacing}`}
+    >
+      <div className="flex-shrink-0 w-8">
+        {showAvatar && (
+          <div className="h-8 w-8 rounded-full bg-navy text-white flex items-center justify-center text-xs font-medium">
+            {initials(senderName)}
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0 max-w-[75%]">
+        {showHeader && (
+          <div className="flex items-baseline gap-2 flex-wrap mb-1 px-1">
+            <span className="font-medium text-sm text-navy">{senderName}</span>
+            <span
+              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${ROLE_COLORS[senderRole] ?? "bg-neutral-100"}`}
+            >
+              {senderRole.replace("_", " ")}
+            </span>
+            {message.sender?.organization && (
+              <span className="text-xs text-neutral-dark">
+                · {message.sender.organization}
+              </span>
+            )}
+            <span className="text-xs text-neutral-dark">
+              · {relativeTime(message.created_at)}
+              {message.edited_at && <span className="ml-1">(edited)</span>}
+            </span>
+            {message.pending_review && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-warning/15 text-warning">
+                Pending review
+              </span>
+            )}
+          </div>
+        )}
+
         {editing ? (
-          <div className="mt-1 space-y-2">
+          <div className="space-y-2">
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -182,10 +341,12 @@ export function MessageItem({
             </div>
           </div>
         ) : (
-          <div className="mt-1 text-sm text-navy-soft whitespace-pre-wrap break-words">
+          <div
+            className={`inline-block px-3.5 py-2 bg-[#F2F5FA] text-sm text-navy-soft whitespace-pre-wrap break-words max-w-full ${bubbleCornersOther(groupPosition)}`}
+          >
             {message.body}
             {message.link_url && (
-              <div className="mt-1">
+              <div className="mt-1.5">
                 <a
                   href={message.link_url}
                   target="_blank"
@@ -197,7 +358,7 @@ export function MessageItem({
               </div>
             )}
             {message.attachment_path && (
-              <div className="mt-2 inline-flex items-center gap-2 rounded-md border border-brand-border bg-[#F2F5FA] px-3 py-2 text-xs max-w-full">
+              <div className="mt-2 inline-flex items-center gap-2 rounded-md bg-white border border-brand-border px-3 py-1.5 text-xs max-w-full">
                 <span>📎</span>
                 {attachmentUrl ? (
                   <a
@@ -224,15 +385,7 @@ export function MessageItem({
         )}
 
         {!editing && (
-          <div className="mt-1 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs">
-            {canEdit && (
-              <button
-                onClick={() => setEditing(true)}
-                className="text-neutral-dark hover:text-navy"
-              >
-                Edit
-              </button>
-            )}
+          <div className="mt-1 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1">
             {canDelete && (
               <button
                 onClick={submitDelete}
@@ -272,6 +425,33 @@ export function MessageItem({
       )}
     </div>
   );
+}
+
+// Bubble corner radius varies by position in a group for iMessage-style grouping.
+function bubbleCornersOwn(pos: GroupPosition): string {
+  switch (pos) {
+    case "solo":
+      return "rounded-2xl rounded-br-md";
+    case "first":
+      return "rounded-2xl rounded-br-md";
+    case "middle":
+      return "rounded-l-2xl rounded-r-md";
+    case "last":
+      return "rounded-l-2xl rounded-tr-md rounded-br-2xl";
+  }
+}
+
+function bubbleCornersOther(pos: GroupPosition): string {
+  switch (pos) {
+    case "solo":
+      return "rounded-2xl rounded-bl-md";
+    case "first":
+      return "rounded-2xl rounded-bl-md";
+    case "middle":
+      return "rounded-r-2xl rounded-l-md";
+    case "last":
+      return "rounded-r-2xl rounded-tl-md rounded-bl-2xl";
+  }
 }
 
 function formatBytes(n: number): string {
