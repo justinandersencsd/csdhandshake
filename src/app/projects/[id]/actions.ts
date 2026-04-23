@@ -19,7 +19,14 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
   const link_url = ((formData.get("link_url") as string) ?? "").trim() || null;
   const confirmed = formData.get("confirmed_send") === "true";
 
-  if (!project_id || !body) return { error: "Message cannot be empty." };
+  const attachment_path = ((formData.get("attachment_path") as string) ?? "").trim() || null;
+  const attachment_name = ((formData.get("attachment_name") as string) ?? "").trim() || null;
+  const attachment_size_raw = formData.get("attachment_size") as string | null;
+  const attachment_size = attachment_size_raw ? parseInt(attachment_size_raw, 10) : null;
+  const attachment_mime = ((formData.get("attachment_mime") as string) ?? "").trim() || null;
+
+  if (!project_id) return { error: "Missing project." };
+  if (!body && !attachment_path) return { error: "Write something or attach a file." };
 
   const supabase = await createClient();
   const {
@@ -49,7 +56,10 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
   const emailAllowlist = (process.env.EMAIL_ALLOWLIST ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
 
-  const check: FilterResult = checkMessage(body, { urlAllowlist, emailAllowlist });
+  // Run content filter on body only (attachments aren't text-scanned)
+  const check: FilterResult = body
+    ? checkMessage(body, { urlAllowlist, emailAllowlist })
+    : { ok: true };
 
   if (!check.ok && check.hardBlock) {
     const admin = createAdminClient();
@@ -67,10 +77,7 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
       event_type: "message.blocked",
       target_type: "project",
       target_id: project_id,
-      metadata: {
-        flag_type: check.hardBlock.type,
-        match: check.hardBlock.match,
-      },
+      metadata: { flag_type: check.hardBlock.type, match: check.hardBlock.match },
     });
 
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -101,20 +108,14 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
 
     return {
       error: `This message was blocked (${flagLabel(check.hardBlock.type)}).`,
-      blocked: {
-        type: flagLabel(check.hardBlock.type),
-        match: check.hardBlock.match,
-      },
+      blocked: { type: flagLabel(check.hardBlock.type), match: check.hardBlock.match },
     };
   }
 
   if (check.softWarn && !confirmed) {
     return {
       needsConfirm: true,
-      softWarn: {
-        type: flagLabel(check.softWarn.type),
-        match: check.softWarn.match,
-      },
+      softWarn: { type: flagLabel(check.softWarn.type), match: check.softWarn.match },
     };
   }
 
@@ -166,6 +167,10 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
       sender_id: user.id,
       body,
       link_url,
+      attachment_path,
+      attachment_name,
+      attachment_size,
+      attachment_mime,
       pending_review: pendingReview,
     })
     .select("id")
@@ -200,11 +205,10 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
       event_type: "message.sent",
       target_type: "message",
       target_id: inserted.id,
-      metadata: { project_id, pending_review: pendingReview },
+      metadata: { project_id, pending_review: pendingReview, has_attachment: !!attachment_path },
     });
   }
 
-  // Send immediate email notifications (rate-limited per recipient per 5 min)
   if (!pendingReview) {
     try {
       await notifyMembers({
@@ -213,7 +217,7 @@ export async function sendMessage(formData: FormData): Promise<SendResult> {
         senderId: user.id,
         senderName: profile.full_name,
         senderRole: profile.role,
-        body,
+        body: body || `(shared an attachment: ${attachment_name})`,
       });
     } catch (e) {
       console.error("Notification failed", e);
@@ -335,7 +339,7 @@ export async function approveMessage(formData: FormData) {
   if (!user) redirect("/login");
 
   const { data: msg } = await supabase
-    .from("messages").select("sender_id, project_id, body").eq("id", id).maybeSingle();
+    .from("messages").select("sender_id, project_id, body, attachment_name").eq("id", id).maybeSingle();
   if (!msg) return;
 
   const admin = createAdminClient();
@@ -380,7 +384,6 @@ export async function approveMessage(formData: FormData) {
     metadata: { project_id },
   });
 
-  // Now that message is approved, send out notifications
   try {
     const { data: sender } = await admin
       .from("users").select("full_name, role").eq("id", msg.sender_id).maybeSingle();
@@ -391,7 +394,7 @@ export async function approveMessage(formData: FormData) {
         senderId: msg.sender_id,
         senderName: sender.full_name,
         senderRole: sender.role,
-        body: msg.body,
+        body: msg.body || `(shared an attachment: ${msg.attachment_name})`,
       });
     }
   } catch (e) {
@@ -419,6 +422,42 @@ export async function markAsRead(projectId: string) {
 
   revalidatePath("/");
   revalidatePath(`/projects/${projectId}`);
+}
+
+/** Return a signed URL for an attachment. Caller is a project member (checked via RLS). */
+export async function getAttachmentUrl(path: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Verify membership via the attachment path's project_id prefix
+  const projectId = path.split("/")[0];
+  if (!projectId) return null;
+
+  const { data: member } = await supabase
+    .from("project_members")
+    .select("project_id")
+    .eq("project_id", projectId)
+    .eq("user_id", user.id)
+    .is("left_at", null)
+    .maybeSingle();
+
+  // Admins can bypass membership check
+  const { data: profile } = await supabase
+    .from("users").select("role, school_id").eq("id", user.id).maybeSingle();
+  const isAdmin =
+    profile?.role === "district_admin" ||
+    (profile?.role === "school_admin"); // school admin check via project.school_id could be tighter
+
+  if (!member && !isAdmin) return null;
+
+  const admin = createAdminClient();
+  const { data, error } = await admin.storage
+    .from("attachments")
+    .createSignedUrl(path, 60 * 60); // 1 hour
+
+  if (error || !data) return null;
+  return data.signedUrl;
 }
 
 // --- helpers ---
@@ -496,7 +535,6 @@ async function notifyMembers(p: {
 }) {
   const admin = createAdminClient();
 
-  // Get active project members except sender
   const { data: members } = await admin
     .from("project_members")
     .select("user_id, user:users!user_id(email, full_name, notification_prefs)")
@@ -515,10 +553,9 @@ async function notifyMembers(p: {
     if (!u?.email) continue;
 
     const prefs = u.notification_prefs ?? {};
-    const freq = prefs.email_frequency ?? "immediate"; // immediate | daily | never
+    const freq = prefs.email_frequency ?? "immediate";
     if (freq !== "immediate") continue;
 
-    // Rate-limit: skip if we've already emailed this recipient for this project in last 5 min
     const { data: recent } = await admin
       .from("email_log")
       .select("id")

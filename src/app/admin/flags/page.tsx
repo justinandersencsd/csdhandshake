@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { AdminNav } from "@/components/admin-nav";
 import { relativeTime } from "@/lib/format";
-import { dismissFlag, escalateFlag, resolveReport } from "../actions";
+import { dismissFlag, acknowledgeFlag, resolveReport } from "../actions";
 
 export default async function AdminFlagsPage({
   searchParams,
@@ -17,7 +17,7 @@ export default async function AdminFlagsPage({
     | "pending"
     | "all"
     | "dismissed"
-    | "escalated";
+    | "acknowledged";
 
   const supabase = await createClient();
   const {
@@ -90,7 +90,7 @@ export default async function AdminFlagsPage({
           </div>
 
           <div className="flex gap-1 text-xs flex-wrap">
-            {(["pending", "escalated", "dismissed", "all"] as const).map((f) => (
+            {(["pending", "acknowledged", "dismissed", "all"] as const).map((f) => (
               <Link
                 key={f}
                 href={`/admin/flags?filter=${f}`}
@@ -180,10 +180,10 @@ export default async function AdminFlagsPage({
                                 Dismiss
                               </button>
                             </form>
-                            <form action={escalateFlag}>
+                            <form action={acknowledgeFlag}>
                               <input type="hidden" name="id" value={f.id} />
-                              <button className="px-2.5 py-1 text-xs rounded bg-warning/15 text-warning hover:bg-warning/25">
-                                Escalate
+                              <button className="px-2.5 py-1 text-xs rounded bg-success/15 text-success hover:bg-success/25">
+                                Acknowledge
                               </button>
                             </form>
                           </div>
@@ -275,9 +275,9 @@ export default async function AdminFlagsPage({
                             </form>
                             <form action={resolveReport}>
                               <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="action" value="escalate" />
-                              <button className="px-2.5 py-1 text-xs rounded bg-warning/15 text-warning hover:bg-warning/25">
-                                Escalate
+                              <input type="hidden" name="action" value="acknowledge" />
+                              <button className="px-2.5 py-1 text-xs rounded bg-success/15 text-success hover:bg-success/25">
+                                Acknowledge
                               </button>
                             </form>
                           </div>

@@ -2,11 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { sendMessage } from "@/app/projects/[id]/actions";
+import { UploadButton, type UploadedAttachment } from "./upload-button";
 
 export function MessageComposer({ projectId }: { projectId: string }) {
   const [body, setBody] = useState("");
   const [link, setLink] = useState("");
   const [showLink, setShowLink] = useState(false);
+  const [attachment, setAttachment] = useState<UploadedAttachment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [block, setBlock] = useState<{ type: string; match: string } | null>(null);
   const [softWarn, setSoftWarn] = useState<{ type: string; match: string } | null>(
@@ -23,6 +25,12 @@ export function MessageComposer({ projectId }: { projectId: string }) {
     fd.set("body", body);
     if (link) fd.set("link_url", link);
     if (confirmed) fd.set("confirmed_send", "true");
+    if (attachment) {
+      fd.set("attachment_path", attachment.path);
+      fd.set("attachment_name", attachment.name);
+      fd.set("attachment_size", String(attachment.size));
+      fd.set("attachment_mime", attachment.mime);
+    }
 
     startTransition(async () => {
       const res = await sendMessage(fd);
@@ -31,6 +39,7 @@ export function MessageComposer({ projectId }: { projectId: string }) {
         setBody("");
         setLink("");
         setShowLink(false);
+        setAttachment(null);
         setSoftWarn(null);
         return;
       }
@@ -45,6 +54,8 @@ export function MessageComposer({ projectId }: { projectId: string }) {
       setError(res.error);
     });
   }
+
+  const canSend = (body.trim().length > 0 || !!attachment) && !isPending;
 
   return (
     <>
@@ -65,22 +76,49 @@ export function MessageComposer({ projectId }: { projectId: string }) {
             className="w-full rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-navy"
           />
         )}
+        {attachment && (
+          <div className="flex items-center justify-between gap-2 rounded-md bg-[#F2F5FA] border border-brand-border px-3 py-2 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <span>📎</span>
+              <span className="truncate text-navy">{attachment.name}</span>
+              <span className="text-neutral-dark flex-shrink-0">
+                {formatBytes(attachment.size)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAttachment(null)}
+              className="text-neutral-dark hover:text-danger flex-shrink-0"
+            >
+              Remove
+            </button>
+          </div>
+        )}
         {error && (
           <div className="text-sm text-danger rounded-md bg-danger/10 px-3 py-2">
             {error}
           </div>
         )}
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setShowLink((v) => !v)}
-            className="text-xs text-neutral-dark hover:text-navy"
-          >
-            {showLink ? "Remove link" : "+ Add link"}
-          </button>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowLink((v) => !v)}
+              className="text-xs text-neutral-dark hover:text-navy"
+            >
+              {showLink ? "Remove link" : "+ Add link"}
+            </button>
+            {!attachment && (
+              <UploadButton
+                projectId={projectId}
+                onUploaded={setAttachment}
+                disabled={isPending}
+              />
+            )}
+          </div>
           <button
             onClick={() => submit(false)}
-            disabled={isPending || !body.trim()}
+            disabled={!canSend}
             className="px-4 py-2 rounded-md bg-navy text-white text-sm disabled:opacity-50"
           >
             {isPending ? "Sending…" : "Send"}
@@ -107,6 +145,12 @@ export function MessageComposer({ projectId }: { projectId: string }) {
       )}
     </>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function BlockDialog({

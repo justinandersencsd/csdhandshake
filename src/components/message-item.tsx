@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { editMessage, deleteMessage, approveMessage } from "@/app/projects/[id]/actions";
+import { useState, useTransition, useEffect } from "react";
+import { editMessage, deleteMessage, approveMessage, getAttachmentUrl } from "@/app/projects/[id]/actions";
 import { ReportDialog } from "./report-dialog";
 import { relativeTime, initials, isWithin5Min } from "@/lib/format";
 
@@ -9,6 +9,10 @@ type Message = {
   id: string;
   body: string;
   link_url: string | null;
+  attachment_path?: string | null;
+  attachment_name?: string | null;
+  attachment_size?: number | null;
+  attachment_mime?: string | null;
   created_at: string;
   edited_at: string | null;
   deleted_at: string | null;
@@ -46,6 +50,7 @@ export function MessageItem({
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(message.body);
   const [showReport, setShowReport] = useState(false);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const isOwn = message.sender_id === currentUserId;
@@ -57,6 +62,18 @@ export function MessageItem({
 
   const senderName = message.sender?.full_name ?? "Unknown";
   const senderRole = message.sender?.role ?? "student";
+
+  // Lazy-fetch a signed URL for the attachment
+  useEffect(() => {
+    if (!message.attachment_path || isDeleted) return;
+    let cancelled = false;
+    getAttachmentUrl(message.attachment_path).then((url) => {
+      if (!cancelled) setAttachmentUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [message.attachment_path, isDeleted]);
 
   function submitEdit() {
     const fd = new FormData();
@@ -179,6 +196,30 @@ export function MessageItem({
                 </a>
               </div>
             )}
+            {message.attachment_path && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-md border border-brand-border bg-[#F2F5FA] px-3 py-2 text-xs max-w-full">
+                <span>📎</span>
+                {attachmentUrl ? (
+                  <a
+                    href={attachmentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-navy hover:underline truncate"
+                  >
+                    {message.attachment_name ?? "Attachment"}
+                  </a>
+                ) : (
+                  <span className="text-neutral-dark truncate">
+                    {message.attachment_name ?? "Attachment"}
+                  </span>
+                )}
+                {message.attachment_size != null && (
+                  <span className="text-neutral-dark flex-shrink-0">
+                    {formatBytes(message.attachment_size)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -231,4 +272,10 @@ export function MessageItem({
       )}
     </div>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
