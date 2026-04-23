@@ -1,177 +1,235 @@
 "use client";
 
-import { useState } from "react";
-import { editMessage, deleteMessage } from "@/app/projects/[id]/actions";
-import { RoleBadge } from "./role-badge";
+import { useState, useTransition } from "react";
+import { editMessage, deleteMessage, approveMessage } from "@/app/projects/[id]/actions";
+import { ReportDialog } from "./report-dialog";
 import { relativeTime, initials, isWithin5Min } from "@/lib/format";
 
-type Role = "student" | "partner" | "teacher" | "school_admin" | "district_admin";
-
-type Props = {
-  message: {
-    id: string;
-    body: string;
-    attachment_url: string | null;
-    attachment_label: string | null;
-    created_at: string;
-    edited_at: string | null;
-    deleted_at: string | null;
-    sender: { id: string; full_name: string; role: Role } | null;
-  };
-  currentUserId: string;
-  isAdmin: boolean;
-  projectId: string;
-  projectArchived: boolean;
+type Message = {
+  id: string;
+  body: string;
+  link_url: string | null;
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  sender_id: string;
+  pending_review?: boolean;
+  sender: {
+    full_name: string;
+    role: string;
+    organization: string | null;
+  } | null;
 };
 
-const roleColors: Record<Role, string> = {
-  student: "bg-role-student-bg text-role-student-text",
-  partner: "bg-role-partner-bg text-role-partner-text",
-  teacher: "bg-role-teacher-bg text-role-teacher-text",
-  school_admin: "bg-role-admin-bg text-role-admin-text",
-  district_admin: "bg-role-admin-bg text-role-admin-text",
+const ROLE_COLORS: Record<string, string> = {
+  student: "bg-role-student/15 text-role-student",
+  partner: "bg-role-partner/15 text-role-partner",
+  teacher: "bg-role-teacher/15 text-role-teacher",
+  school_admin: "bg-role-admin/15 text-role-admin",
+  district_admin: "bg-role-admin/15 text-role-admin",
 };
 
 export function MessageItem({
   message,
   currentUserId,
   isAdmin,
+  isTeacher,
   projectId,
-  projectArchived,
-}: Props) {
+}: {
+  message: Message;
+  currentUserId: string;
+  isAdmin: boolean;
+  isTeacher: boolean;
+  projectId: string;
+}) {
   const [editing, setEditing] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [body, setBody] = useState(message.body);
+  const [showReport, setShowReport] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  const isOwn = message.sender?.id === currentUserId;
+  const isOwn = message.sender_id === currentUserId;
   const isDeleted = !!message.deleted_at;
-  const canEdit = !projectArchived && isOwn && !isDeleted && isWithin5Min(message.created_at);
-  const canDelete = !projectArchived && isOwn && !isDeleted;
+  const canEdit =
+    isOwn && !isDeleted && isWithin5Min(message.created_at);
+  const canDelete = (isOwn || isAdmin) && !isDeleted;
+  const canApprove = (isTeacher || isAdmin) && message.pending_review;
+  const canReport = !isOwn && !isDeleted;
 
-  async function handleEdit(formData: FormData) {
-    setPending(true);
-    try {
-      await editMessage(projectId, message.id, formData);
+  const senderName = message.sender?.full_name ?? "Unknown";
+  const senderRole = message.sender?.role ?? "student";
+
+  function submitEdit() {
+    const fd = new FormData();
+    fd.set("id", message.id);
+    fd.set("project_id", projectId);
+    fd.set("body", body);
+    startTransition(async () => {
+      const res = await editMessage(fd);
+      if (res?.error) {
+        alert(res.error);
+        return;
+      }
       setEditing(false);
-    } finally {
-      setPending(false);
-    }
+    });
   }
 
-  async function handleDelete() {
-    if (!confirm("Delete this message? A tombstone will remain for other members.")) return;
-    setPending(true);
-    try {
-      await deleteMessage(projectId, message.id);
-    } finally {
-      setPending(false);
-    }
+  function submitDelete() {
+    if (!confirm("Delete this message?")) return;
+    const fd = new FormData();
+    fd.set("id", message.id);
+    fd.set("project_id", projectId);
+    startTransition(async () => {
+      await deleteMessage(fd);
+    });
   }
 
-  // Non-admin view of a deleted message: just a tombstone
-  if (isDeleted && !isAdmin) {
+  function submitApprove() {
+    const fd = new FormData();
+    fd.set("id", message.id);
+    fd.set("project_id", projectId);
+    startTransition(async () => {
+      await approveMessage(fd);
+    });
+  }
+
+  if (isDeleted) {
     return (
-      <div className="py-2 px-1">
-        <p className="text-sm text-neutral-dark italic">
-          {message.sender?.full_name ?? "A user"}: [removed by sender]
-        </p>
+      <div className="flex gap-3 py-2 text-xs text-neutral-dark italic">
+        <div className="w-8 flex-shrink-0" />
+        <div>
+          Message deleted by {message.deleted_by === message.sender_id ? "sender" : "moderator"} · {relativeTime(message.deleted_at!)}
+          {isAdmin && (
+            <div className="mt-1 text-xs text-neutral-dark/70 not-italic font-mono line-through">
+              {message.body}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="py-3 px-1 flex gap-3 group">
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium shrink-0 ${
-          message.sender ? roleColors[message.sender.role] : "bg-muted text-foreground"
-        }`}
-      >
-        {message.sender ? initials(message.sender.full_name) : "?"}
+    <div className="flex gap-3 group">
+      <div className="flex-shrink-0 h-8 w-8 rounded-full bg-navy text-white flex items-center justify-center text-xs font-medium">
+        {initials(senderName)}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="font-medium text-navy text-sm">
-            {message.sender?.full_name ?? "Unknown user"}
+          <span className="font-medium text-sm text-navy">{senderName}</span>
+          <span
+            className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${ROLE_COLORS[senderRole] ?? "bg-neutral-100"}`}
+          >
+            {senderRole.replace("_", " ")}
           </span>
-          {message.sender && <RoleBadge role={message.sender.role} size="xs" />}
+          {message.sender?.organization && (
+            <span className="text-xs text-neutral-dark">
+              · {message.sender.organization}
+            </span>
+          )}
           <span className="text-xs text-neutral-dark">
-            {relativeTime(message.created_at)}
-            {message.edited_at && " · edited"}
+            · {relativeTime(message.created_at)}
+            {message.edited_at && <span className="ml-1">(edited)</span>}
           </span>
-          {isDeleted && isAdmin && (
-            <span className="text-[10px] bg-warning-bg text-warning-text px-1.5 py-0.5 rounded">
-              deleted (admin view)
+          {message.pending_review && (
+            <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-warning/15 text-warning">
+              Pending review
             </span>
           )}
         </div>
 
         {editing ? (
-          <form action={handleEdit} className="mt-1 space-y-2">
+          <div className="mt-1 space-y-2">
             <textarea
-              name="body"
-              defaultValue={message.body}
-              required
-              rows={2}
-              className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              className="w-full min-h-[60px] rounded-md border border-brand-border px-3 py-2 text-sm"
             />
             <div className="flex gap-2">
               <button
-                type="submit"
-                disabled={pending}
-                className="rounded-md bg-navy text-surface px-3 py-1 text-xs font-medium hover:bg-navy-soft disabled:opacity-50"
+                onClick={submitEdit}
+                disabled={isPending}
+                className="px-3 py-1.5 rounded bg-navy text-white text-xs"
               >
                 Save
               </button>
               <button
-                type="button"
-                onClick={() => setEditing(false)}
-                className="rounded-md border border-brand-border px-3 py-1 text-xs text-navy hover:bg-muted"
+                onClick={() => {
+                  setEditing(false);
+                  setBody(message.body);
+                }}
+                disabled={isPending}
+                className="px-3 py-1.5 rounded border border-brand-border text-xs"
               >
                 Cancel
               </button>
             </div>
-          </form>
+          </div>
         ) : (
-          <>
-            <p className="text-sm text-navy mt-0.5 whitespace-pre-wrap break-words">
-              {message.body}
-            </p>
-            {message.attachment_url && (
-              <a
-                href={message.attachment_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 mt-2 rounded-md border border-brand-border bg-muted px-3 py-2 text-xs hover:border-accent"
-              >
-                <span className="text-navy">🔗 {message.attachment_label || "Link"}</span>
-                <span className="text-neutral-dark">· opens in new tab</span>
-              </a>
-            )}
-            {(canEdit || canDelete) && (
-              <div className="mt-1 flex gap-3 text-xs opacity-60 group-hover:opacity-100 transition">
-                {canEdit && (
-                  <button
-                    type="button"
-                    onClick={() => setEditing(true)}
-                    className="text-neutral-dark hover:text-navy"
-                  >
-                    Edit
-                  </button>
-                )}
-                {canDelete && (
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={pending}
-                    className="text-neutral-dark hover:text-danger-text disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                )}
+          <div className="mt-1 text-sm text-navy-soft whitespace-pre-wrap break-words">
+            {message.body}
+            {message.link_url && (
+              <div className="mt-1">
+                <a
+                  href={message.link_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-accent hover:underline text-xs break-all"
+                >
+                  {message.link_url}
+                </a>
               </div>
             )}
-          </>
+          </div>
+        )}
+
+        {!editing && (
+          <div className="mt-1 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs">
+            {canEdit && (
+              <button
+                onClick={() => setEditing(true)}
+                className="text-neutral-dark hover:text-navy"
+              >
+                Edit
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={submitDelete}
+                disabled={isPending}
+                className="text-neutral-dark hover:text-danger"
+              >
+                Delete
+              </button>
+            )}
+            {canApprove && (
+              <button
+                onClick={submitApprove}
+                disabled={isPending}
+                className="text-neutral-dark hover:text-success font-medium"
+              >
+                Approve
+              </button>
+            )}
+            {canReport && (
+              <button
+                onClick={() => setShowReport(true)}
+                className="text-neutral-dark hover:text-warning"
+              >
+                Report
+              </button>
+            )}
+          </div>
         )}
       </div>
+
+      {showReport && (
+        <ReportDialog
+          projectId={projectId}
+          messageId={message.id}
+          onClose={() => setShowReport(false)}
+        />
+      )}
     </div>
   );
 }

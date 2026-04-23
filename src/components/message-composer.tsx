@@ -1,106 +1,221 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useTransition } from "react";
 import { sendMessage } from "@/app/projects/[id]/actions";
 
-export function MessageComposer({
-  projectId,
-  disabled,
-}: {
-  projectId: string;
-  disabled?: boolean;
-}) {
+export function MessageComposer({ projectId }: { projectId: string }) {
+  const [body, setBody] = useState("");
+  const [link, setLink] = useState("");
   const [showLink, setShowLink] = useState(false);
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
+  const [block, setBlock] = useState<{ type: string; match: string } | null>(null);
+  const [softWarn, setSoftWarn] = useState<{ type: string; match: string } | null>(
+    null
+  );
+  const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit(formData: FormData) {
-    setPending(true);
+  function submit(confirmed: boolean) {
     setError(null);
-    try {
-      const result = await sendMessage(projectId, formData);
-      if (result?.error) {
-        setError(result.error);
-      } else {
-        formRef.current?.reset();
-        setShowLink(false);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setPending(false);
-    }
-  }
+    setBlock(null);
+    if (!confirmed) setSoftWarn(null);
+    const fd = new FormData();
+    fd.set("project_id", projectId);
+    fd.set("body", body);
+    if (link) fd.set("link_url", link);
+    if (confirmed) fd.set("confirmed_send", "true");
 
-  if (disabled) {
-    return (
-      <div className="border-t border-brand-border p-4 bg-muted text-sm text-neutral-dark text-center">
-        This project is archived. Messages are read-only.
-      </div>
-    );
+    startTransition(async () => {
+      const res = await sendMessage(fd);
+      if (!res) return;
+      if ("ok" in res) {
+        setBody("");
+        setLink("");
+        setShowLink(false);
+        setSoftWarn(null);
+        return;
+      }
+      if ("needsConfirm" in res) {
+        setSoftWarn(res.softWarn);
+        return;
+      }
+      if (res.blocked) {
+        setBlock(res.blocked);
+        return;
+      }
+      setError(res.error);
+    });
   }
 
   return (
-    <form
-      ref={formRef}
-      action={handleSubmit}
-      className="border-t border-brand-border p-3 bg-surface space-y-2"
-    >
-      <textarea
-        name="body"
-        required
-        rows={2}
-        placeholder="Write a message..."
-        className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-      />
-
-      {showLink && (
-        <div className="space-y-2 border border-brand-border rounded-md p-3 bg-muted">
+    <>
+      <div className="space-y-2">
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Write a message…"
+          className="w-full min-h-[88px] rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-navy resize-y"
+          disabled={isPending}
+        />
+        {showLink && (
           <input
             type="url"
-            name="attachment_url"
-            placeholder="https://docs.google.com/..."
-            className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            placeholder="https://…"
+            className="w-full rounded-md border border-brand-border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-navy"
           />
-          <input
-            type="text"
-            name="attachment_label"
-            placeholder="Label (e.g. Project brief)"
-            className="w-full rounded-md border border-brand-border bg-surface px-3 py-1.5 text-sm"
-          />
-        </div>
-      )}
-
-      {error && (
-        <p className="text-sm bg-danger-bg text-danger-text p-2 rounded">{error}</p>
-      )}
-
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex gap-2">
+        )}
+        {error && (
+          <div className="text-sm text-danger rounded-md bg-danger/10 px-3 py-2">
+            {error}
+          </div>
+        )}
+        <div className="flex items-center justify-between">
           <button
             type="button"
-            onClick={() => setShowLink(!showLink)}
-            className="text-xs text-neutral-dark hover:text-navy px-2 py-1 rounded border border-brand-border"
+            onClick={() => setShowLink((v) => !v)}
+            className="text-xs text-neutral-dark hover:text-navy"
           >
-            {showLink ? "− Remove link" : "+ Link"}
+            {showLink ? "Remove link" : "+ Add link"}
           </button>
           <button
-            type="button"
-            disabled
-            className="text-xs text-neutral-dark opacity-50 px-2 py-1 rounded border border-brand-border cursor-not-allowed"
+            onClick={() => submit(false)}
+            disabled={isPending || !body.trim()}
+            className="px-4 py-2 rounded-md bg-navy text-white text-sm disabled:opacity-50"
           >
-            + File (coming soon)
+            {isPending ? "Sending…" : "Send"}
           </button>
         </div>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md bg-navy text-surface px-4 py-1.5 text-sm font-medium hover:bg-navy-soft transition disabled:opacity-50"
-        >
-          {pending ? "Sending…" : "Send"}
-        </button>
       </div>
-    </form>
+
+      {block && (
+        <BlockDialog
+          flagType={block.type}
+          match={block.match}
+          onClose={() => setBlock(null)}
+        />
+      )}
+
+      {softWarn && (
+        <SoftWarnDialog
+          flagType={softWarn.type}
+          match={softWarn.match}
+          isPending={isPending}
+          onCancel={() => setSoftWarn(null)}
+          onConfirm={() => submit(true)}
+        />
+      )}
+    </>
+  );
+}
+
+function BlockDialog({
+  flagType,
+  match,
+  onClose,
+}: {
+  flagType: string;
+  match: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="h-8 w-8 flex items-center justify-center rounded-full bg-danger/10 text-danger flex-shrink-0">
+            !
+          </div>
+          <div className="space-y-2">
+            <h2 className="font-serif text-xl text-navy">Message blocked</h2>
+            <p className="text-sm text-neutral-dark">
+              We detected a <strong>{flagType}</strong> in your message.
+              Personal contact info and social handles aren&apos;t allowed in
+              Handshake — it&apos;s a school-monitored space.
+            </p>
+            <div className="rounded-md bg-[#F2F5FA] px-3 py-2 text-xs text-neutral-dark font-mono break-all">
+              {match}
+            </div>
+            <p className="text-xs text-neutral-dark">
+              Edit your message to remove this and try again. If you need to
+              share contact info, talk to your teacher.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-md bg-navy text-white text-sm"
+          >
+            OK, I&apos;ll edit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SoftWarnDialog({
+  flagType,
+  match,
+  isPending,
+  onCancel,
+  onConfirm,
+}: {
+  flagType: string;
+  match: string;
+  isPending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="h-8 w-8 flex items-center justify-center rounded-full bg-warning/15 text-warning flex-shrink-0">
+            ?
+          </div>
+          <div className="space-y-2">
+            <h2 className="font-serif text-xl text-navy">
+              Send this {flagType}?
+            </h2>
+            <p className="text-sm text-neutral-dark">
+              Your message contains an external link. Teachers can see it and
+              review it if needed.
+            </p>
+            <div className="rounded-md bg-[#F2F5FA] px-3 py-2 text-xs text-neutral-dark font-mono break-all">
+              {match}
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={isPending}
+            className="px-4 py-2 rounded-md border border-brand-border text-sm text-neutral-dark hover:bg-neutral-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isPending}
+            className="px-4 py-2 rounded-md bg-navy text-white text-sm disabled:opacity-50"
+          >
+            {isPending ? "Sending…" : "Send anyway"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

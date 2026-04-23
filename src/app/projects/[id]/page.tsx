@@ -1,343 +1,216 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { AppHeader } from "@/components/app-header";
 import { MessageComposer } from "@/components/message-composer";
 import { MessageItem } from "@/components/message-item";
-import { AppHeader } from "@/components/app-header";
-import { initials } from "@/lib/format";
+import { initials, relativeTime } from "@/lib/format";
 
-type Role = "student" | "partner" | "teacher" | "school_admin" | "district_admin";
-
-const roleColor: Record<string, string> = {
-  student: "bg-role-student-bg text-role-student-text",
-  partner: "bg-role-partner-bg text-role-partner-text",
-  teacher: "bg-role-teacher-bg text-role-teacher-text",
-  school_admin: "bg-role-admin-bg text-role-admin-text",
-  district_admin: "bg-role-admin-bg text-role-admin-text",
+const ROLE_COLORS: Record<string, string> = {
+  student: "bg-role-student/15 text-role-student",
+  partner: "bg-role-partner/15 text-role-partner",
+  teacher: "bg-role-teacher/15 text-role-teacher",
+  school_admin: "bg-role-admin/15 text-role-admin",
+  district_admin: "bg-role-admin/15 text-role-admin",
 };
 
-const roleLabel: Record<string, string> = {
-  student: "Student",
-  partner: "Partner",
-  teacher: "Teacher",
-  school_admin: "School Admin",
-  district_admin: "District Admin",
-};
-
-function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-export default async function ProjectThreadPage({
+export default async function ProjectPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, role, email, coc_accepted_at, school_id")
+    .select("full_name, role, email, organization, school_id")
     .eq("id", user.id)
     .single();
-
   if (!profile) redirect("/login");
-  if (!profile.coc_accepted_at) {
-    if (profile.role === "partner") redirect("/onboarding/coc");
-    if (profile.role === "student") redirect("/onboarding/aup");
-  }
-
-  const isAdmin =
-    profile.role === "school_admin" || profile.role === "district_admin";
-  const isTeacher = profile.role === "teacher";
-  const canInvite = isTeacher || isAdmin;
-  const canCreate = isTeacher || isAdmin;
 
   const { data: project } = await supabase
     .from("projects")
-    .select(
-      `
-      id, name, description, status, partner_organization, school_id, created_by, archived_at, created_at,
-      school:schools(name)
-    `
-    )
+    .select("*, school:schools!school_id(name)")
     .eq("id", id)
     .maybeSingle();
-
   if (!project) notFound();
+
+  const isTeacher = profile.role === "teacher";
+  const isAdmin =
+    profile.role === "school_admin" || profile.role === "district_admin";
+  const canSettings = isTeacher || isAdmin || project.created_by === user.id;
 
   const { data: members } = await supabase
     .from("project_members")
-    .select("project_role, added_at, user:users!user_id(id, full_name, role, organization)")
+    .select(
+      "user_id, project_role, added_at, user:users!user_id(full_name, role, organization, email)"
+    )
     .eq("project_id", id)
     .is("left_at", null);
-
-  const isMember = members?.some((m) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (m.user as any)?.id === user.id;
-  });
-
-  const isOwner = project.created_by === user.id;
-  const canSettings = isOwner || isAdmin;
 
   const { data: messages } = await supabase
     .from("messages")
     .select(
-      `
-      id, body, attachment_url, attachment_label, created_at, edited_at, deleted_at, pending_review,
-      sender:users!sender_id(id, full_name, role)
-    `
+      "id, body, link_url, created_at, edited_at, deleted_at, deleted_by, sender_id, pending_review, sender:users!sender_id(full_name, role, organization)"
     )
     .eq("project_id", id)
-    .eq("pending_review", false)
     .order("created_at", { ascending: true });
 
-  const ownerMember = members?.find((m) => m.project_role === "owner");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ownerName = (ownerMember?.user as any)?.full_name ?? "Unknown";
-
-  const archived = project.status === "archived";
-  const visibleMessages = (messages ?? []).filter((m) => !m.deleted_at || isAdmin);
-  const messageCount = visibleMessages.length;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const schoolName = (project.school as any)?.name ?? null;
+  const pendingCount = (messages ?? []).filter((m) => m.pending_review).length;
+  const owner = members?.find((m) => m.user_id === project.created_by);
 
   return (
-    <main className="min-h-screen bg-[#F2F5FA] text-foreground flex flex-col">
+    <main className="min-h-screen bg-[#F2F5FA] text-foreground">
       <AppHeader
         profile={profile}
-        canInvite={canInvite}
-        canCreateProject={canCreate}
+        canInvite={isTeacher || isAdmin}
+        canCreateProject={isTeacher || isAdmin}
       />
 
-      {/* Project context strip */}
-      <div className="border-b border-brand-border bg-surface">
-        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <Link
-              href="/"
-              className="text-neutral-dark hover:text-navy shrink-0 text-sm"
-              aria-label="Back to projects"
-            >
-              ←
-            </Link>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2.5 mb-0.5">
-                <span
-                  className={`h-2 w-2 rounded-full shrink-0 ${
-                    archived ? "bg-neutral-dark/30" : "bg-success-text"
-                  }`}
-                  aria-hidden="true"
+      <div className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-[1fr_260px]">
+        <div className="min-w-0 space-y-6">
+          <div className="flex items-baseline justify-between gap-4 flex-wrap">
+            <div className="space-y-1">
+              <Link
+                href="/"
+                className="text-xs text-neutral-dark hover:text-navy"
+              >
+                ← All projects
+              </Link>
+              <h1 className="font-serif text-3xl text-navy leading-tight">
+                {project.name}
+              </h1>
+              {project.status === "archived" && (
+                <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-200 text-neutral-700">
+                  Archived
+                </span>
+              )}
+            </div>
+          </div>
+
+          {(isTeacher || isAdmin) && pendingCount > 0 && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-navy">
+              <strong>{pendingCount}</strong> {pendingCount === 1 ? "message" : "messages"} pending your review.
+              Look for the &ldquo;Pending review&rdquo; tag below and click &ldquo;Approve&rdquo;.
+            </div>
+          )}
+
+          <div className="bg-surface rounded-xl border border-brand-border p-5 space-y-6">
+            {(!messages || messages.length === 0) ? (
+              <p className="text-sm text-neutral-dark italic text-center py-8">
+                No messages yet. Start the conversation below.
+              </p>
+            ) : (
+              messages.map((m) => (
+                <MessageItem
+                  key={m.id}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  message={m as any}
+                  currentUserId={user.id}
+                  isAdmin={isAdmin}
+                  isTeacher={isTeacher}
+                  projectId={id}
                 />
-                <h1 className="font-serif text-2xl text-navy leading-none truncate">
-                  {project.name}
-                </h1>
-                {archived && (
-                  <span className="text-[10px] uppercase tracking-widest bg-muted text-neutral-dark px-2 py-0.5 rounded-full shrink-0">
-                    Archived
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2 text-xs text-neutral-dark ml-[18px]">
-                {project.partner_organization && (
-                  <>
-                    <span className="font-medium text-navy">
-                      {project.partner_organization}
-                    </span>
-                    <span className="text-brand-border">·</span>
-                  </>
-                )}
-                <span>Owner: {ownerName}</span>
-                {messageCount > 0 && (
-                  <>
-                    <span className="text-brand-border">·</span>
-                    <span>
-                      {messageCount} message{messageCount === 1 ? "" : "s"}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Content: messages + sidebar */}
-      <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Messages column */}
-        <div className="flex-1 flex flex-col bg-surface lg:border-r border-brand-border min-w-0">
-          <div className="flex-1">
-            <div className="mx-auto max-w-3xl px-6 py-6">
-              {!isMember && isAdmin && (
-                <div className="bg-accent text-navy text-sm p-3 rounded-md mb-6 border border-brand-border flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-navy shrink-0" />
-                  You&apos;re viewing this project as an admin. Admin views are
-                  logged.
-                </div>
-              )}
-
-              {visibleMessages.length === 0 ? (
-                <div className="flex items-center justify-center min-h-[400px]">
-                  <div className="text-center space-y-2 px-8">
-                    <p className="font-serif text-3xl text-navy italic">
-                      Quiet here
-                    </p>
-                    <p className="text-sm text-neutral-dark">
-                      {isMember
-                        ? "Be the first to post below."
-                        : "No messages yet in this project."}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="divide-y divide-brand-border">
-                  {visibleMessages.map((m) => (
-                    <MessageItem
-                      key={m.id}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      message={m as any}
-                      currentUserId={user.id}
-                      isAdmin={isAdmin}
-                      projectId={id}
-                      projectArchived={archived}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+              ))
+            )}
           </div>
 
-          {isMember && (
-            <div className="sticky bottom-0 bg-surface">
-              <div className="mx-auto max-w-3xl">
-                <MessageComposer projectId={id} disabled={archived} />
-              </div>
-            </div>
+          {project.status === "active" && (
+            <MessageComposer projectId={id} />
           )}
         </div>
 
-        {/* Sidebar */}
-        <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 border-brand-border">
-          <div className="p-6 space-y-6 lg:sticky lg:top-14">
-            {/* About */}
-            <section className="space-y-2.5">
-              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
-                About
-              </h3>
-              {project.description ? (
-                <p className="text-sm text-navy/80 leading-relaxed">
-                  {project.description}
-                </p>
-              ) : (
-                <p className="text-sm text-neutral-dark italic">
-                  No description added
-                </p>
-              )}
-              <dl className="text-xs text-neutral-dark space-y-1 pt-1">
-                {schoolName && (
-                  <div>
-                    <dt className="inline text-neutral-dark">School: </dt>
-                    <dd className="inline text-navy font-medium">
-                      {schoolName}
-                    </dd>
-                  </div>
-                )}
-                {project.created_at && (
-                  <div>
-                    <dt className="inline text-neutral-dark">Started: </dt>
-                    <dd className="inline text-navy font-medium">
-                      {formatDate(project.created_at)}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </section>
-
-            {/* Partner */}
-            {project.partner_organization && (
-              <section className="space-y-2">
-                <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
-                  Partner
-                </h3>
-                <div className="bg-role-partner-bg text-role-partner-text px-4 py-3 rounded-lg">
-                  <div className="font-serif text-lg leading-tight">
-                    {project.partner_organization}
-                  </div>
-                </div>
-              </section>
+        <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
+          <div className="space-y-2">
+            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">
+              About
+            </div>
+            {project.description ? (
+              <p className="text-sm text-navy-soft">{project.description}</p>
+            ) : (
+              <p className="text-sm text-neutral-dark italic">No description.</p>
             )}
-
-            {/* Members */}
-            <section className="space-y-3">
-              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-neutral-dark">
-                Members {members?.length ? `· ${members.length}` : ""}
-              </h3>
-              <ul className="space-y-2.5">
-                {(members ?? []).map((m) => {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const u = m.user as any;
-                  if (!u) return null;
-                  const role = u.role as Role;
-                  return (
-                    <li key={u.id} className="flex items-start gap-2.5">
-                      <div
-                        className={`h-8 w-8 rounded-full flex items-center justify-center text-[11px] font-medium shrink-0 ${
-                          roleColor[role] ?? "bg-muted text-foreground"
-                        }`}
-                        title={u.full_name}
-                      >
-                        {initials(u.full_name)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm text-navy font-medium truncate">
-                          {u.full_name}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-neutral-dark">
-                          <span>{roleLabel[role] ?? role}</span>
-                          {m.project_role === "owner" && (
-                            <>
-                              <span className="text-brand-border">·</span>
-                              <span className="uppercase tracking-wider">
-                                Owner
-                              </span>
-                            </>
-                          )}
-                          {u.organization && (
-                            <>
-                              <span className="text-brand-border">·</span>
-                              <span className="truncate">{u.organization}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-
-            {/* Settings link */}
-            {canSettings && (
-              <div className="pt-2 border-t border-brand-border">
-                <Link
-                  href={`/projects/${id}/settings`}
-                  className="inline-flex items-center gap-1 text-sm text-navy hover:text-navy-soft transition font-medium"
-                >
-                  Project settings →
-                </Link>
-              </div>
-            )}
+            <div className="pt-1 text-xs text-neutral-dark">
+              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+              {(project.school as any)?.name}
+            </div>
+            <div className="text-xs text-neutral-dark">
+              Started {relativeTime(project.created_at)}
+            </div>
           </div>
+
+          {project.partner_organization && (
+            <div className="rounded-lg bg-warning/8 border border-warning/20 px-4 py-3 space-y-1">
+              <div className="text-[11px] uppercase tracking-wider text-neutral-dark">
+                Partner
+              </div>
+              <div className="font-serif text-base text-navy italic">
+                {project.partner_organization}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-dark">
+              Members · {members?.length ?? 0}
+            </div>
+            <ul className="space-y-2">
+              {members?.map((m) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const u = m.user as any;
+                const isOwner = m.user_id === project.created_by;
+                return (
+                  <li
+                    key={m.user_id}
+                    className="flex items-start gap-2 text-xs"
+                  >
+                    <div className="h-7 w-7 flex-shrink-0 rounded-full bg-navy text-white flex items-center justify-center text-[10px] font-medium">
+                      {initials(u?.full_name ?? "")}
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="font-medium text-navy truncate">
+                        {u?.full_name}
+                        {isOwner && (
+                          <span className="ml-1 text-[9px] text-neutral-dark uppercase">
+                            · Owner
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`text-[9px] uppercase tracking-wider px-1 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}
+                        >
+                          {u?.role?.replace("_", " ")}
+                        </span>
+                        {u?.organization && (
+                          <span className="text-[11px] text-neutral-dark truncate">
+                            {u.organization}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {canSettings && (
+            <div className="pt-2 border-t border-brand-border/50">
+              <Link
+                href={`/projects/${id}/settings`}
+                className="text-xs text-neutral-dark hover:text-navy"
+              >
+                Project settings →
+              </Link>
+            </div>
+          )}
         </aside>
       </div>
     </main>

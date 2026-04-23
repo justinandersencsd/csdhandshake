@@ -1,24 +1,34 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { AppHeader } from "@/components/app-header";
+import { AddMemberForm } from "@/components/add-member-form";
 import {
   updateProject,
+  updateSafetySettings,
   archiveProject,
   unarchiveProject,
   removeMember,
 } from "./actions";
-import { RoleBadge } from "@/components/role-badge";
-import { AddMemberForm } from "@/components/add-member-form";
+
+const ROLE_COLORS: Record<string, string> = {
+  student: "bg-role-student/15 text-role-student",
+  partner: "bg-role-partner/15 text-role-partner",
+  teacher: "bg-role-teacher/15 text-role-teacher",
+  school_admin: "bg-role-admin/15 text-role-admin",
+  district_admin: "bg-role-admin/15 text-role-admin",
+};
 
 export default async function ProjectSettingsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; success?: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -27,20 +37,20 @@ export default async function ProjectSettingsPage({
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role, school_id")
+    .select("role, school_id, full_name, email")
     .eq("id", user.id)
     .single();
   if (!profile) redirect("/login");
 
   const isAdmin =
     profile.role === "school_admin" || profile.role === "district_admin";
+  const isTeacher = profile.role === "teacher";
 
   const { data: project } = await supabase
     .from("projects")
     .select("*")
     .eq("id", id)
     .maybeSingle();
-
   if (!project) notFound();
 
   const isOwner = project.created_by === user.id;
@@ -48,134 +58,225 @@ export default async function ProjectSettingsPage({
 
   const { data: members } = await supabase
     .from("project_members")
-    .select("project_role, added_at, user:users!user_id(id, full_name, email, role, organization)")
+    .select(
+      "user_id, project_role, added_at, user:users!user_id(full_name, role, organization, email)"
+    )
     .eq("project_id", id)
     .is("left_at", null);
 
-  const archived = project.status === "archived";
+  const error = typeof sp.error === "string" ? sp.error : null;
+  const success = typeof sp.success === "string" ? sp.success : null;
+
+  const quietStart = (project.quiet_hours_start ?? "20:00:00").slice(0, 5);
+  const quietEnd = (project.quiet_hours_end ?? "08:00:00").slice(0, 5);
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-brand-border bg-surface">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href={`/projects/${id}`} className="text-lg font-medium text-navy">
-            ← {project.name}
-          </Link>
-          <Link href="/" className="text-sm text-neutral-dark hover:text-navy">
-            Home
-          </Link>
-        </div>
-      </header>
+    <main className="min-h-screen bg-[#F2F5FA] text-foreground">
+      <AppHeader
+        profile={profile}
+        canInvite={isTeacher || isAdmin}
+        canCreateProject={isTeacher || isAdmin}
+      />
 
-      <div className="max-w-3xl mx-auto px-6 py-8 space-y-8">
+      <div className="mx-auto max-w-3xl px-6 py-8 space-y-8">
         <div>
-          <h1 className="text-2xl font-medium text-navy">Project settings</h1>
+          <Link
+            href={`/projects/${id}`}
+            className="text-xs text-neutral-dark hover:text-navy"
+          >
+            ← Back to project
+          </Link>
+          <h1 className="font-serif text-3xl text-navy mt-2">
+            Project settings
+          </h1>
         </div>
 
-        {sp.error && (
-          <div className="bg-danger-bg text-danger-text p-3 rounded text-sm">{sp.error}</div>
+        {error && (
+          <div className="rounded-md bg-danger/10 text-danger px-4 py-2 text-sm">
+            {error}
+          </div>
         )}
-        {sp.success && (
-          <div className="bg-success-bg text-success-text p-3 rounded text-sm">
-            ✓ {sp.success}
+        {success && (
+          <div className="rounded-md bg-success/10 text-success px-4 py-2 text-sm">
+            {success}
           </div>
         )}
 
-        {/* GENERAL */}
-        <section className="border border-brand-border rounded-lg p-6 bg-surface space-y-4">
-          <h2 className="font-medium text-navy">General</h2>
+        {/* General */}
+        <section className="bg-surface rounded-xl border border-brand-border p-6 space-y-4">
+          <h2 className="font-serif text-xl text-navy">General</h2>
           <form action={updateProject} className="space-y-4">
-            <input type="hidden" name="id" value={project.id} />
-
-            <div className="space-y-1">
-              <label htmlFor="name" className="text-sm font-medium text-navy">
-                Project name
-              </label>
+            <input type="hidden" name="id" value={id} />
+            <div>
+              <label className="text-xs text-neutral-dark">Name</label>
               <input
-                id="name"
                 name="name"
-                type="text"
                 required
                 defaultValue={project.name}
-                disabled={archived}
-                className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                className="mt-1 w-full rounded-md border border-brand-border px-3 py-2 text-sm"
               />
             </div>
-
-            <div className="space-y-1">
-              <label htmlFor="description" className="text-sm font-medium text-navy">
-                Description
-              </label>
+            <div>
+              <label className="text-xs text-neutral-dark">Description</label>
               <textarea
-                id="description"
                 name="description"
-                rows={3}
                 defaultValue={project.description ?? ""}
-                disabled={archived}
-                className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none disabled:opacity-50"
+                className="mt-1 w-full rounded-md border border-brand-border px-3 py-2 text-sm min-h-[80px]"
               />
             </div>
-
-            <div className="space-y-1">
-              <label
-                htmlFor="partner_organization"
-                className="text-sm font-medium text-navy"
-              >
+            <div>
+              <label className="text-xs text-neutral-dark">
                 Partner organization
               </label>
               <input
-                id="partner_organization"
                 name="partner_organization"
-                type="text"
                 defaultValue={project.partner_organization ?? ""}
-                disabled={archived}
-                className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                className="mt-1 w-full rounded-md border border-brand-border px-3 py-2 text-sm"
               />
             </div>
-
-            <button
-              type="submit"
-              disabled={archived}
-              className="rounded-md bg-navy text-surface px-4 py-1.5 text-sm font-medium hover:bg-navy-soft transition disabled:opacity-50"
-            >
-              Save changes
-            </button>
+            <div className="flex justify-end">
+              <button className="px-4 py-2 rounded-md bg-navy text-white text-sm">
+                Save changes
+              </button>
+            </div>
           </form>
         </section>
 
-        {/* MEMBERS */}
-        <section className="border border-brand-border rounded-lg p-6 bg-surface space-y-4">
-          <h2 className="font-medium text-navy">Members</h2>
+        {/* Safety */}
+        <section className="bg-surface rounded-xl border border-brand-border p-6 space-y-4">
+          <div>
+            <h2 className="font-serif text-xl text-navy">Safety</h2>
+            <p className="text-xs text-neutral-dark mt-1">
+              Extra guardrails for partner communication. Applies to messages
+              from partners; students and teachers are unaffected.
+            </p>
+          </div>
 
-          <ul className="divide-y divide-brand-border">
-            {(members ?? []).map((m) => {
+          <form action={updateSafetySettings} className="space-y-5">
+            <input type="hidden" name="id" value={id} />
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  name="first_message_review_enabled"
+                  defaultChecked={project.first_message_review_enabled ?? false}
+                  className="rounded"
+                />
+                Review partner&apos;s first messages before they post
+              </label>
+              <div className="ml-6 flex items-center gap-2 text-xs text-neutral-dark">
+                <span>Auto-release after</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  name="first_message_review_count"
+                  defaultValue={project.first_message_review_count ?? 3}
+                  className="w-14 rounded border border-brand-border px-2 py-1 text-sm text-center"
+                />
+                <span>approved messages</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  name="quiet_hours_enabled"
+                  defaultChecked={project.quiet_hours_enabled ?? false}
+                  className="rounded"
+                />
+                Quiet hours (block partner messages during window)
+              </label>
+              <div className="ml-6 flex items-center gap-2 text-xs text-neutral-dark">
+                <input
+                  type="time"
+                  name="quiet_hours_start"
+                  defaultValue={quietStart}
+                  className="rounded border border-brand-border px-2 py-1 text-sm"
+                />
+                <span>to</span>
+                <input
+                  type="time"
+                  name="quiet_hours_end"
+                  defaultValue={quietEnd}
+                  className="rounded border border-brand-border px-2 py-1 text-sm"
+                />
+                <span>(school timezone)</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  name="rate_limit_enabled"
+                  defaultChecked={project.rate_limit_enabled ?? false}
+                  className="rounded"
+                />
+                Rate limit partner messages
+              </label>
+              <div className="ml-6 flex items-center gap-2 text-xs text-neutral-dark">
+                <span>Max</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  name="rate_limit_per_hour"
+                  defaultValue={project.rate_limit_per_hour ?? 10}
+                  className="w-14 rounded border border-brand-border px-2 py-1 text-sm text-center"
+                />
+                <span>messages per hour</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button className="px-4 py-2 rounded-md bg-navy text-white text-sm">
+                Save safety settings
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* Members */}
+        <section className="bg-surface rounded-xl border border-brand-border p-6 space-y-4">
+          <h2 className="font-serif text-xl text-navy">Members</h2>
+          <ul className="space-y-2">
+            {members?.map((m) => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const u = m.user as any;
-              if (!u) return null;
-              const isOwnerRow = m.project_role === "owner";
+              const isProjectOwner = m.user_id === project.created_by;
               return (
-                <li key={u.id} className="py-2 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-navy text-sm">{u.full_name}</span>
-                      <RoleBadge role={u.role} size="xs" />
-                      {isOwnerRow && (
-                        <span className="text-xs text-neutral-dark">Owner</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-neutral-dark">
-                      {u.email}
-                      {u.organization ? ` · ${u.organization}` : ""}
+                <li
+                  key={m.user_id}
+                  className="flex items-center justify-between py-2 border-b border-brand-border/50 last:border-b-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-navy">
+                        {u?.full_name}
+                        {isProjectOwner && (
+                          <span className="ml-2 text-[10px] text-neutral-dark uppercase tracking-wider">
+                            Owner
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-neutral-dark flex items-center gap-2">
+                        <span
+                          className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${ROLE_COLORS[u?.role] ?? "bg-neutral-100"}`}
+                        >
+                          {u?.role?.replace("_", " ")}
+                        </span>
+                        {u?.email}
+                      </div>
                     </div>
                   </div>
-                  {!isOwnerRow && !archived && (
+                  {!isProjectOwner && (
                     <form action={removeMember}>
-                      <input type="hidden" name="project_id" value={project.id} />
-                      <input type="hidden" name="user_id" value={u.id} />
-                      <button
-                        type="submit"
-                        className="text-xs text-neutral-dark hover:text-danger-text"
-                      >
+                      <input type="hidden" name="project_id" value={id} />
+                      <input type="hidden" name="user_id" value={m.user_id} />
+                      <button className="text-xs text-neutral-dark hover:text-danger">
                         Remove
                       </button>
                     </form>
@@ -185,42 +286,36 @@ export default async function ProjectSettingsPage({
             })}
           </ul>
 
-          {!archived && <AddMemberForm projectId={project.id} />}
+          <div className="pt-3 border-t border-brand-border/50">
+            <AddMemberForm projectId={id} />
+          </div>
         </section>
 
-        {/* DANGER ZONE */}
-        <section className="border border-brand-border rounded-lg p-6 bg-surface space-y-4">
-          <h2 className="font-medium text-navy">
-            {archived ? "Archive status" : "Archive project"}
-          </h2>
-          {archived ? (
+        {/* Danger zone */}
+        <section className="bg-surface rounded-xl border border-danger/30 p-6 space-y-3">
+          <h2 className="font-serif text-xl text-danger">Danger zone</h2>
+          {project.status === "active" ? (
             <>
               <p className="text-sm text-neutral-dark">
-                This project is archived. Unarchive to let members post again.
+                Archiving hides the project from active lists. Messages remain
+                accessible. You can unarchive later.
               </p>
-              <form action={unarchiveProject}>
-                <input type="hidden" name="id" value={project.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-brand-border px-4 py-1.5 text-sm text-navy hover:bg-muted"
-                >
-                  Unarchive project
+              <form action={archiveProject}>
+                <input type="hidden" name="id" value={id} />
+                <button className="px-4 py-2 rounded-md bg-danger text-white text-sm">
+                  Archive project
                 </button>
               </form>
             </>
           ) : (
             <>
               <p className="text-sm text-neutral-dark">
-                Archiving makes the thread read-only. Messages remain visible. You can
-                unarchive at any time.
+                This project is archived. Unarchive to resume messaging.
               </p>
-              <form action={archiveProject}>
-                <input type="hidden" name="id" value={project.id} />
-                <button
-                  type="submit"
-                  className="rounded-md bg-danger-bg text-danger-text border border-danger-text/20 px-4 py-1.5 text-sm font-medium hover:opacity-90 transition"
-                >
-                  Archive project
+              <form action={unarchiveProject}>
+                <input type="hidden" name="id" value={id} />
+                <button className="px-4 py-2 rounded-md bg-navy text-white text-sm">
+                  Unarchive project
                 </button>
               </form>
             </>

@@ -83,6 +83,66 @@ export async function updateProject(formData: FormData) {
   redirect(`/projects/${id}/settings?success=Project+updated`);
 }
 
+export async function updateSafetySettings(formData: FormData) {
+  const id = formData.get("id") as string;
+  if (!id) redirect("/?error=Missing+project+id");
+
+  const first_message_review_enabled =
+    formData.get("first_message_review_enabled") === "on";
+  const first_message_review_count = Math.max(
+    1,
+    Math.min(10, parseInt((formData.get("first_message_review_count") as string) || "3"))
+  );
+  const quiet_hours_enabled = formData.get("quiet_hours_enabled") === "on";
+  const quiet_hours_start =
+    (formData.get("quiet_hours_start") as string) || "20:00";
+  const quiet_hours_end =
+    (formData.get("quiet_hours_end") as string) || "08:00";
+  const rate_limit_enabled = formData.get("rate_limit_enabled") === "on";
+  const rate_limit_per_hour = Math.max(
+    1,
+    Math.min(100, parseInt((formData.get("rate_limit_per_hour") as string) || "10"))
+  );
+
+  const { user } = await requireOwnerOrAdmin(id);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      first_message_review_enabled,
+      first_message_review_count,
+      quiet_hours_enabled,
+      quiet_hours_start: quiet_hours_start + ":00",
+      quiet_hours_end: quiet_hours_end + ":00",
+      rate_limit_enabled,
+      rate_limit_per_hour,
+    })
+    .eq("id", id);
+
+  if (error) {
+    redirect(
+      `/projects/${id}/settings?error=${encodeURIComponent("Failed to save safety: " + error.message)}`
+    );
+  }
+
+  const admin = createAdminClient();
+  await admin.from("audit_events").insert({
+    user_id: user.id,
+    event_type: "project.safety_changed",
+    target_type: "project",
+    target_id: id,
+    metadata: {
+      first_message_review_enabled,
+      quiet_hours_enabled,
+      rate_limit_enabled,
+    },
+  });
+
+  invalidateProject(id);
+  redirect(`/projects/${id}/settings?success=Safety+settings+updated`);
+}
+
 export async function archiveProject(formData: FormData) {
   const id = formData.get("id") as string;
   if (!id) redirect("/?error=Missing+project+id");
